@@ -66,3 +66,46 @@ def test_caching_allocator_never_hands_out_a_live_block():
 def test_torchscript_fusion_is_off_on_hip():
     apply()
     assert not torch._C._jit_texpr_fuser_enabled()
+
+
+class _Device:
+    is_capturing = False
+
+
+def test_a_block_taken_during_capture_stays_with_the_graphs():
+    device = _Device()
+    alloc = CachingAllocator(_Driver(), device)
+    warm = alloc.allocate(256)
+    alloc.deallocate(warm, 256)
+    device.is_capturing = True
+    ptr = alloc.allocate(256)
+    alloc.deallocate(ptr, 256)
+    device.is_capturing = False
+    assert ptr == warm and alloc.capture_misses == 0
+    assert alloc.allocate(256) != ptr
+
+
+def test_a_capture_reuses_blocks_it_freed_and_graphs_share_scratch():
+    device = _Device()
+    alloc = CachingAllocator(_Driver(), device)
+    warm = alloc.allocate(256)
+    alloc.deallocate(warm, 256)
+    device.is_capturing = True
+    first = alloc.allocate(256)
+    alloc.deallocate(first, 256)
+    again = alloc.allocate(256)  # later in the same capture
+    alloc.deallocate(again, 256)
+    device.is_capturing = False
+    device.is_capturing = True
+    other_graph = alloc.allocate(256)  # a second capture
+    device.is_capturing = False
+    assert first == again == other_graph == warm
+    assert alloc.capture_misses == 0
+
+
+def test_a_cache_miss_during_capture_is_counted():
+    device = _Device()
+    alloc = CachingAllocator(_Driver(), device)
+    device.is_capturing = True
+    alloc.allocate(512)
+    assert alloc.capture_misses == 1

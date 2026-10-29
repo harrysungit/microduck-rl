@@ -25,6 +25,14 @@ with it. Nothing changes on CUDA or CPU devices.
   helpers (39 ms per ``quat_from_euler_xyz`` in an environment reset, against
   25 us unfused), which tiny per-environment tensors never earn back. The
   fuser and the profiling executor are turned off when torch is a HIP build.
+
+Opt-in, MICRODUCK_HIP_GRAPHS=1: capture mjlab's step, forward, reset and sense
+graphs on HIP after all. Eager steps spend about a fifth of their time between
+kernel launches. The simulation first runs each captured function once eagerly,
+so every scratch buffer it needs is in the caching allocator's cache; capture
+then takes all its memory from the cache, the graphs hold no allocation nodes
+(ROCm 7.2 leaks the memory those allocate on every replay), and blocks handed
+out during capture stay with the graphs as their shared scratch.
 """
 
 import functools
@@ -32,6 +40,7 @@ import inspect
 import os
 from collections import defaultdict
 
+import mujoco_warp as mjwarp
 import torch
 import warp as wp
 from mjlab.sim import sim as _sim
@@ -47,20 +56,46 @@ class CachingAllocator:
     order keeps the previous user of a block ahead of the next one, as in
     PyTorch's caching allocator. Memory is never returned to the driver; the
     cache holds at most the peak working set of a step.
+
+    Blocks handed out during graph capture belong to the graphs from then on.
+    All of a simulation's graphs replay one after another on one stream, so
+    they share these blocks as scratch: a block a capture frees goes to a
+    graph pool that later allocations in the same or another capture draw from
+    first, and that eager allocations never see. With the cache warmed up by
+    an eager run of the same functions, capture then allocates in the pattern
+    of that run and never reaches the inner allocator; ``capture_misses``
+    counts the times it did.
     """
 
-    def __init__(self, inner):
+    def __init__(self, inner, device=None):
         self.inner = inner
+        self.device = device
         self.memory_kind = inner.memory_kind
         self.deallocate_requires_context_guard = inner.deallocate_requires_context_guard
-        self.blocks: dict[int, list[int]] = defaultdict(list)
+        self.blocks: dict[int, list[int]] = defaultdict(list)  # free, for eager use
+        self.graph_blocks: dict[int, list[int]] = defaultdict(list)  # free graph scratch
+        self.graph_owned: set[int] = set()
+        self.capture_misses = 0
 
     def allocate(self, size_in_bytes):
+        # Warp's Device.is_capturing returns the dict of active captures when one is on.
+        if self.device is not None and bool(self.device.is_capturing):
+            for pool in (self.graph_blocks, self.blocks):
+                cached = pool.get(size_in_bytes)
+                if cached:
+                    ptr = cached.pop()
+                    break
+            else:
+                ptr = self.inner.allocate(size_in_bytes)
+                self.capture_misses += 1
+            self.graph_owned.add(ptr)
+            return ptr
         cached = self.blocks.get(size_in_bytes)
         return cached.pop() if cached else self.inner.allocate(size_in_bytes)
 
     def deallocate(self, ptr, size_in_bytes):
-        self.blocks[size_in_bytes].append(ptr)
+        pool = self.graph_blocks if ptr in self.graph_owned else self.blocks
+        pool[size_in_bytes].append(ptr)
 
 
 def _is_hip(simulation) -> bool:
@@ -73,7 +108,22 @@ def _use_caching_allocator(device) -> None:
         return
     current = wp.get_device_allocator(device)
     if not isinstance(current, CachingAllocator):
-        wp.set_device_allocator(device, CachingAllocator(current))
+        wp.set_device_allocator(device, CachingAllocator(current, device))
+
+
+def _graphs_requested() -> bool:
+    return os.environ.get("MICRODUCK_HIP_GRAPHS") == "1"
+
+
+def _warm_up(simulation) -> None:
+    """Run each function mjlab captures once eagerly, so capture finds every buffer it needs cached."""
+    with wp.ScopedDevice(simulation.wp_device):
+        mjwarp.step(simulation.wp_model, simulation.wp_data)
+        mjwarp.forward(simulation.wp_model, simulation.wp_data)
+        mjwarp.reset_data(simulation.wp_model, simulation.wp_data, reset=simulation._reset_mask_wp)
+        if simulation._sensor_context is not None:
+            simulation._sense_kernel()
+    wp.synchronize_device(simulation.wp_device)
 
 
 def apply() -> None:
@@ -90,12 +140,14 @@ def apply() -> None:
     should_use_cuda_graph = _sim.Simulation._should_use_cuda_graph
     init = _sim.Simulation.__init__
     init_signature = inspect.signature(init)
+    create_graph = _sim.Simulation.create_graph
 
     @functools.wraps(should_use_cuda_graph)
     def _should_use_cuda_graph(self) -> bool:
         if _is_hip(self):
-            print("[INFO] HIP device: CUDA graphs disabled, simulation runs eagerly")
-            return False
+            if not _graphs_requested():
+                print("[INFO] HIP device: CUDA graphs disabled, simulation runs eagerly")
+            return False  # with MICRODUCK_HIP_GRAPHS=1, captured after warm-up in __init__
         return should_use_cuda_graph(self)
 
     @functools.wraps(init)
@@ -106,7 +158,25 @@ def apply() -> None:
         init(self, *args, **kwargs)
         if _is_hip(self):
             self._wp_model.opt.graph_conditional = False
+            if _graphs_requested() and isinstance(wp.get_device_allocator(self.wp_device), CachingAllocator):
+                self.use_cuda_graph = True
+                self.create_graph()
+
+    @functools.wraps(create_graph)
+    def _create_graph(self) -> None:
+        # Every capture, including the re-capture after expand_model_fields(),
+        # starts from a warm cache, so the graphs allocate nothing.
+        if _is_hip(self) and self.use_cuda_graph:
+            _warm_up(self)
+            allocator = wp.get_device_allocator(self.wp_device)
+            misses = allocator.capture_misses
+            create_graph(self)
+            print(f"[INFO] HIP device: CUDA graphs captured after warm-up "
+                  f"({allocator.capture_misses - misses} cache misses during capture)")
+        else:
+            create_graph(self)
 
     _should_use_cuda_graph._microduck_rocm = True
     _sim.Simulation._should_use_cuda_graph = _should_use_cuda_graph
     _sim.Simulation.__init__ = __init__
+    _sim.Simulation.create_graph = _create_graph

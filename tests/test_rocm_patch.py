@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 from mjlab.sim.sim import Simulation
 
 from microduck_rl.patches.rocm import CachingAllocator, apply
@@ -59,3 +60,9 @@ def test_caching_allocator_never_hands_out_a_live_block():
     alloc = CachingAllocator(_Driver())
     live = alloc.allocate(256)
     assert alloc.allocate(256) != live
+
+
+@pytest.mark.skipif(not torch.version.hip, reason="only HIP builds of torch turn TorchScript fusion off")
+def test_torchscript_fusion_is_off_on_hip():
+    apply()
+    assert not torch._C._jit_texpr_fuser_enabled()

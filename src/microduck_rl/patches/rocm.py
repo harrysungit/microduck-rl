@@ -20,6 +20,11 @@ with it. Nothing changes on CUDA or CPU devices.
   memory on gfx1151, and that took 86 % of the step. A caching allocator
   hands freed blocks back out instead (see CachingAllocator). Set
   MICRODUCK_HIP_CACHING_ALLOCATOR=0 to compare without it.
+- With ROCm PyTorch, TorchScript's tensor-expression fuser spends tens of
+  milliseconds of CPU time on every call of mjlab's ``torch.jit.script`` math
+  helpers (39 ms per ``quat_from_euler_xyz`` in an environment reset, against
+  25 us unfused), which tiny per-environment tensors never earn back. The
+  fuser and the profiling executor are turned off when torch is a HIP build.
 """
 
 import functools
@@ -27,6 +32,7 @@ import inspect
 import os
 from collections import defaultdict
 
+import torch
 import warp as wp
 from mjlab.sim import sim as _sim
 
@@ -76,6 +82,10 @@ def apply() -> None:
     if _applied:
         return
     _applied = True
+
+    if torch.version.hip:
+        torch._C._jit_set_texpr_fuser_enabled(False)
+        torch._C._jit_set_profiling_executor(False)
 
     should_use_cuda_graph = _sim.Simulation._should_use_cuda_graph
     init = _sim.Simulation.__init__

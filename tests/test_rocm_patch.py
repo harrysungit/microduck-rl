@@ -109,3 +109,12 @@ def test_a_cache_miss_during_capture_is_counted():
     device.is_capturing = True
     alloc.allocate(512)
     assert alloc.capture_misses == 1
+
+
+@pytest.mark.skipif(not torch.version.hip, reason="only HIP builds of torch pin matmul precision to IEEE")
+def test_mjlab_matmul_precision_is_ieee_on_hip():
+    from mjlab.utils.torch import configure_torch_backends
+
+    apply()
+    configure_torch_backends(allow_tf32=True)
+    assert torch.backends.cuda.matmul.fp32_precision == "ieee"

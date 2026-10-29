@@ -25,6 +25,11 @@ with it. Nothing changes on CUDA or CPU devices.
   helpers (39 ms per ``quat_from_euler_xyz`` in an environment reset, against
   25 us unfused), which tiny per-environment tensors never earn back. The
   fuser and the profiling executor are turned off when torch is a HIP build.
+- mjlab sets ``torch.backends.cuda.matmul.fp32_precision = "tf32"``. RDNA has
+  no TF32, so matmuls run in IEEE FP32 regardless, but with PyTorch TunableOp
+  enabled, torch 2.12 raises when TunableOp reads the TF32 flag through the
+  legacy getter ("mix of the legacy and new APIs"). On HIP mjlab sets "ieee",
+  which is what the hardware does anyway.
 
 Opt-in, MICRODUCK_HIP_GRAPHS=1: capture mjlab's step, forward, reset and sense
 graphs on HIP after all. Eager steps spend about a fifth of their time between
@@ -136,6 +141,16 @@ def apply() -> None:
     if torch.version.hip:
         torch._C._jit_set_texpr_fuser_enabled(False)
         torch._C._jit_set_profiling_executor(False)
+
+        from mjlab.utils import torch as _mjlab_torch
+
+        configure_29 = _mjlab_torch._configure_29
+
+        @functools.wraps(configure_29)
+        def _configure_29_ieee(allow_tf32: bool) -> None:
+            configure_29(False)
+
+        _mjlab_torch._configure_29 = _configure_29_ieee
 
     should_use_cuda_graph = _sim.Simulation._should_use_cuda_graph
     init = _sim.Simulation.__init__

@@ -43,7 +43,11 @@ MicroduckHd1910RlCfg = _replace(
 def _make_hd1910_velocity_env_cfg(backlash: bool, **kwargs):
     cfg = make_microduck_velocity_env_cfg(**kwargs)
     if backlash:
-        return make_backlash_variant(cfg, MICRODUCK_WALK_BACKLASH_HD1910_ROBOT_CFG)
+        cfg = make_backlash_variant(cfg, MICRODUCK_WALK_BACKLASH_HD1910_ROBOT_CFG)
+        # 34 DOFs: mujoco_warp picks its sparse path above 32; the dense one is the same physics and
+        # 15% faster on gfx1151 (177 against 209 ms per 4096-world step).
+        cfg.sim.mujoco.jacobian = "dense"
+        return cfg
     cfg.scene.entities = {**cfg.scene.entities, "robot": MICRODUCK_WALK_HD1910_ROBOT_CFG}
     return cfg
 

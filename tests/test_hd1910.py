@@ -92,3 +92,10 @@ def test_xl330_tasks_are_unchanged():
         (actuator,) = load_env_cfg(task_id).scene.entities["robot"].articulation.actuators
         assert actuator.motor_name == "xl330" and actuator.kp_fw == 200.0
         assert load_rl_cfg(task_id).experiment_name == "velocity"
+
+
+@pytest.mark.parametrize("task_id", TASK_IDS)
+def test_backlash_tasks_use_the_dense_jacobian(task_id):
+    expected = "dense" if "Backlash" in task_id else "auto"
+    for play in (False, True):
+        assert load_env_cfg(task_id, play=play).sim.mujoco.jacobian == expected

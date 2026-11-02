@@ -16,6 +16,11 @@ from microduck_rl.patches.perf import apply as _apply_perf
 
 _apply_perf()
 
+# Optional fixed exploration std for fine-tuning, MICRODUCK_FIXED_STD=<std>; a no-op without it (see fixed_std.py).
+from microduck_rl.patches.fixed_std import apply as _apply_fixed_std
+
+_apply_fixed_std()
+
 from mjlab.tasks.registry import register_mjlab_task
 
 from mjlab_microduck.tasks import (

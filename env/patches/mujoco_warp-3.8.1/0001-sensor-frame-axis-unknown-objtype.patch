@@ -1,0 +1,18 @@
+mujoco_warp 3.8.1: define xmat in _frame_axis's UNKNOWN branch
+
+The UNKNOWN branch reads xmat, which only the other branches assign. Warp 1.12
+compiles this; Warp 1.17 (the AMD HIP port) rejects it with "Referencing
+undefined symbol: xmat", so mujoco_warp._src.sensor fails to load. mujoco_warp
+3.10 rewrote the function around _get_mat, which returns the identity for an
+unknown object type; this patch gives 3.8.1 the same behaviour.
+
+--- a/mujoco_warp/_src/sensor.py
++++ b/mujoco_warp/_src/sensor.py
+@@ -370,6 +370,7 @@
+     xmat = cam_xmat_in[worldid, objid]
+     axis = wp.vec3(xmat[0, frame_axis], xmat[1, frame_axis], xmat[2, frame_axis])
+   else:  # UNKNOWN
++    xmat = wp.identity(3, dtype=wp.float32)
+     axis = wp.vec3(xmat[0, frame_axis], xmat[1, frame_axis], xmat[2, frame_axis])
+ 
+   if refid == -1:

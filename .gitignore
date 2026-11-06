@@ -10,3 +10,4 @@ logs/
 *.pt
 *.onnx
 *.mp4
+.deps/

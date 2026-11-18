@@ -186,5 +186,10 @@
       "nonempty declared_checks and rows with exactly matching unique identities",
       "each row full anatomical-head and loaded-sit evidence plus complete physics coverage"
     ]
+  },
+  "source_line_endings": {
+    "policy": "Git LF; upstream manual snapshot verbatim",
+    "semantic_check": "Python ASTs and JSON values unchanged; prior GPU source byte hashes refer to archived pre-normalization text.",
+    "normalization_report": "source_text_normalization.json"
   }
 }

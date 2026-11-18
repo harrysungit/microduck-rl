@@ -1,0 +1,75 @@
+{
+  "files": {
+    "examples/sitstand_headsafe/runtime_state.py": {
+      "after_sha256": "cda5d5327927a270962cc6518743bde70e6ca7653846a130f313c66c23bf932f",
+      "check": "Python AST equivalence",
+      "before_sha256": "86f527f6706cc650f91439855973c11ed52cfc1b54c1b3d365e6ab3cf32b532f"
+    },
+    "examples/sitstand_headsafe/calibration.py": {
+      "after_sha256": "2eec7fb8de0954a986cf37056d97e02027e2ae83bb78e9cbeac59198f7e98719",
+      "check": "Python AST equivalence",
+      "before_sha256": "651eebf6d528a4ae8e2dffbb283d3846b33e1a58b717b7102a5e819c649c0deb"
+    },
+    "examples/sitstand_headsafe/teacher_init.py": {
+      "after_sha256": "ec2e89e9620916b8374b10d3b129fe9656bd54c1a8adb61af1819755d78dea64",
+      "check": "Python AST equivalence",
+      "before_sha256": "38e1e90774287b611abfd0c23f7744476ddab284c9c8452f6c474f051d274b5c"
+    },
+    "examples/sitstand_headsafe/bootstrap.py": {
+      "after_sha256": "6a39923d58fee2dcf4357f9e39ac8e7faa72bd403c277ecde90e429a962a6b2f",
+      "check": "Python AST equivalence",
+      "before_sha256": "7f756c0fd09278b1251beb551240b9fd8784c42cf71930eb8f110430a06a2e18"
+    },
+    "examples/sitstand_headsafe/train_headsafe.py": {
+      "after_sha256": "29818ae3264d501a24e6c16d0264e6fd84e531127841984aa1015065aedb0aeb",
+      "check": "Python AST equivalence",
+      "before_sha256": "224bf5f753be5e4e38ba9f5be490ba09c0ae1d6d0f2e9401d5d616b0875e5e23"
+    },
+    "examples/sitstand_headsafe/headsafe_task.py": {
+      "after_sha256": "9cb2a03e41c7c85a3a61f2b25636a0aacee914699e84de32b15bbcca4024d5fe",
+      "check": "Python AST equivalence",
+      "before_sha256": "4430dc51172c37ee30ca6531ee22bf5ad19fdc1dda2c589a3d0c44fe3f0436da"
+    },
+    "examples/sitstand_headsafe/README.zh.md": {
+      "after_sha256": "290835aa763ff442cabf870e0611f82787a5d1dfab16b0467bdcbc85ec83d4e0",
+      "check": "Line-ending and trailing whitespace normalization",
+      "before_sha256": "4507595f5eb67346ce429fb9d936bc2e7fc37ad9d247e2fdf02e80a51e07d3b3"
+    },
+    "examples/sitstand_headsafe/package_review.py": {
+      "after_sha256": "0a596dee883a8c7993f43c702a6b2687139463b8dbd7166760c0abe9e692ef3e",
+      "check": "Python AST equivalence",
+      "before_sha256": "328d8f2d70e15a0aa83ba99751fb0229373d9f6f5437726684d14d472da617ce"
+    },
+    "examples/sitstand_headsafe/test_recipe.py": {
+      "after_sha256": "4994003516e4e5070ade1ad4cbdf08b40f13b6e7a533ab2972d9abd117234fd1",
+      "check": "Python AST equivalence",
+      "before_sha256": "505d2b5f38c786faf85d790360ba77ab3f1169869ab925694241249320bfb3e4"
+    },
+    "examples/sitstand_headsafe/runtime_actions.py": {
+      "after_sha256": "b87d2a0170c6abe6698bdd5aaf8eb2c7be833af9b26bef3e807014738fb43567",
+      "check": "Python AST equivalence",
+      "before_sha256": "fea109218166bc5dd924283aea6780a72142ba006b25ebdc5aab40ac850f2b28"
+    },
+    "examples/sitstand_headsafe/source_provenance.json": {
+      "after_sha256": "9cb023475a1fa7703639f0accbaaceaa69e4a39f273f43ae89cd61593d376027",
+      "check": "JSON value equivalence",
+      "before_sha256": "f28fcc44d051d021bad84e58b676727c52857285629e8abd0b4766feca3230ce"
+    },
+    "examples/sitstand_headsafe/__init__.py": {
+      "after_sha256": "eee1a7d396c883b4c36ab46b90c80eb7f4ff6de204ff4c803740abd18eced883",
+      "check": "Python AST equivalence",
+      "before_sha256": "36cb6564bd40331658ab22dfc93a323ba4b7e9865548d042f31a77cb6986f305"
+    },
+    "examples/sitstand_headsafe/collect_anchor.py": {
+      "after_sha256": "74ab0747765c1bcd15b4e7fd546b1e64e607d2d1b70de1e03d985ef65bb09b0a",
+      "check": "Python AST equivalence",
+      "before_sha256": "5a9df9f8d33b4c7d27d29c85d787d34c0b5ad4ef6521387dd373f92ed4e19c72"
+    },
+    "examples/sitstand_headsafe/test_package_review.py": {
+      "after_sha256": "a2c616c2486d05dfd2a18ae4822797f37b9b84d959c5c2f962fc8b3e5b8caa16",
+      "check": "Python AST equivalence",
+      "before_sha256": "56ea5de61c26c91cda51f5fca6cf946cc6ce044c396d1a8816cc14df0cf287d8"
+    }
+  },
+  "reason": "Normalize Git source text to LF; whitespace only, Python ASTs and JSON values verified unchanged. Prior GPU source hashes refer to archived pre-normalization text."
+}

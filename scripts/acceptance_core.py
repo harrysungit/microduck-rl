@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import math
+import numbers
 
 import numpy as np
 
@@ -31,8 +32,12 @@ VARIANTS = ("clean", "trained")
 DEFAULT_CRITERIA = {
     # sit-down / stand-up: shares of commanded sit-downs / stand-ups that reach the posture and hold it to the end of
     # the segment; tipped: share of worlds whose trunk tilts past 70 degrees at any moment.
-    "posture": {"clean": {"sit_down_min": 0.8, "stand_up_min": 0.9, "tipped_max": 0.02},
-                "trained": {"sit_down_min": 0.6, "stand_up_min": 0.6, "tipped_max": 0.10}},
+    # Mandatory full-physics-step head/neck evidence. The legacy GPU recorder does not provide it:
+    # missing means UNVERIFIED, never infer zero contacts from final height/tilt.
+    "posture": {"clean": {"sit_down_min": 0.8, "stand_up_min": 0.9, "tipped_max": 0.02,
+                          "head_contact_max": 0.0, "head_audit_coverage_min": 1.0, "legal_sit_support_min": 1.0},
+                "trained": {"sit_down_min": 0.6, "stand_up_min": 0.6, "tipped_max": 0.10,
+                            "head_contact_max": 0.0, "head_audit_coverage_min": 1.0, "legal_sit_support_min": 1.0}},
     # reset: share of worlds a termination ends during the schedule; forward / turn: achieved over commanded velocity
     # in the forward 0.3 m/s and the turn 0.8 rad/s segments (the weaker of the two directions). Tracking is gated in the
     # clean world only: the trained world's topple pushes, head commands and noise drag the mean velocities down, even
@@ -86,6 +91,11 @@ def effective_criteria(contract: str, override: dict | None = None) -> dict:
     crit = copy.deepcopy(DEFAULT_CRITERIA[contract])
     for variant, rules in (override or {}).items():
         crit.setdefault(variant, {}).update(rules)
+    if contract == "posture":
+        for variant in VARIANTS:
+            crit[variant]["head_contact_max"] = 0.0
+            crit[variant]["head_audit_coverage_min"] = 1.0
+            crit[variant]["legal_sit_support_min"] = 1.0
     return crit
 
 
@@ -142,8 +152,9 @@ def evaluate(metrics: dict, criteria: dict) -> list[dict]:
         for key, threshold in rules.items():
             metric, op, gate = parse_key(key)
             value = metrics.get(variant, {}).get(metric)
-            known = value is not None and math.isfinite(value)
-            passed = None if not known else (value >= threshold if op == "min" else value <= threshold)
+            known = isinstance(value, numbers.Real) and not isinstance(value, (bool, np.bool_)) and math.isfinite(value)
+            value = float(value) if known else None
+            passed = None if not known else bool(value >= threshold if op == "min" else value <= threshold)
             checks.append({"variant": variant, "metric": metric, "op": ">=" if op == "min" else "<=",
                            "threshold": threshold, "value": value, "passed": passed, "gate": gate})
     return checks
@@ -181,15 +192,27 @@ def rejudge(result: dict) -> dict:
             c["contract"] = contract["contract"]
         checks += found
     checks += [c for c in result["checks"] if c.get("contract") == "generic"]
+    checks += known_failure_checks(result.get("policy", {}).get("sha256"))
     verdict, reasons = decide(checks, result.get("errors", []))
     return {**result, "checks": checks, "verdict": verdict, "reasons": reasons, "warnings": warnings_of(checks),
+            "human_review": "pending", "deployment_approved": False,
             "rejudged_from": {"verdict": result["verdict"], "reasons": result["reasons"]}}
 
 
+def known_failure_checks(sha256):
+    if sha256 != "6f6c06e830d32023556f66d38c495e9b54ff6625448246896221875269e1dc20":
+        return []
+    return [{"contract": "posture", "variant": "regression", "metric": "known_head_impact", "op": "<=",
+             "threshold": 0., "value": 1., "gate": True, "passed": False}]
+
+
 def onnx_check(max_abs_diff: float | None) -> dict:
+    valid = (isinstance(max_abs_diff, numbers.Real) and not isinstance(max_abs_diff, (bool, np.bool_))
+             and math.isfinite(max_abs_diff) and max_abs_diff >= 0)
+    max_abs_diff = float(max_abs_diff) if valid else None
     return {"contract": "generic", "variant": "-", "metric": "onnx_vs_checkpoint_max_abs_diff", "op": "<=",
             "threshold": GENERIC["onnx_max_abs_diff"], "value": max_abs_diff, "gate": True,
-            "passed": None if max_abs_diff is None else max_abs_diff <= GENERIC["onnx_max_abs_diff"]}
+            "passed": None if max_abs_diff is None else bool(max_abs_diff <= GENERIC["onnx_max_abs_diff"])}
 
 
 def noise_gap(mean_value: float | None, sampled_value: float | None) -> dict:

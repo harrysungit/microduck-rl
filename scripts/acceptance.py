@@ -450,6 +450,9 @@ def main() -> None:
             result["video"] = record_video(args.task, CONTRACTS[declared[0]["contract"]], onnx, args.out_dir, args, device)
         except Exception:
             result["notes"].append("video failed: " + traceback.format_exc(limit=3).replace("\n", " | "))
+    result["checks"] += ac.known_failure_checks(result["policy"]["sha256"])
+    result["human_review"] = "pending"
+    result["deployment_approved"] = False
     result["verdict"], result["reasons"] = ac.decide(result["checks"], result["errors"])
     result["warnings"] = ac.warnings_of(result["checks"])
     result["elapsed_s"] = round(time.time() - t0)

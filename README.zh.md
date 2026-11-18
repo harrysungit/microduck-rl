@@ -18,17 +18,19 @@
 - **策略算数之前的检查**：验收门在训练前声明一个技能"能用"指什么，训练后给出结论；另有独立的 sim2sim，
   在普通 MuJoCo 里运行，不经过训练用的世界。
 
-本仓库的策略还没有在实机上跑过。训练好的策略暂未发布。
+2026-11-18：SitStand lowstd 在仿真和实机试验发现头壳触地，旧验收结论已撤回，不能作为上机候选。
+训练好的策略暂未发布。开始训练前阅读 [训练规则](AGENTS.md)、[仓库与官方更新](docs/REPOSITORIES.zh.md)
+和 [坐站新方案](docs/SITSTAND_PLAN.zh.md)。
 
 ## 技能
 
-在仿真里两项检查都通过的五个技能。每个示例都有训练配方、数据和已知局限。
+以下保留历史技能检查结果；坐站已撤回。自动指标通过不替代完整动作视频的人工核验。
 
 | 技能 | 任务 | 验收（训练世界） | Sim2sim（MuJoCo C） |
 |---|---|---|---|
 | [走路并起身](examples/walk/README.md) | `Mjlab-VelStand-Flat-MicroDuck-HD1910` | ACCEPTED，1 条警告 | 通过 |
 | [起身](examples/standup/README.md) | `Mjlab-StandUp-Flat-MicroDuck-HD1910` | ACCEPTED | 通过，46/48 |
-| [坐下与站起](examples/sitstand/README.md) | `Mjlab-SitStand-Flat-MicroDuck-HD1910` | ACCEPTED | 通过 |
+| [坐下与站起](examples/sitstand/README.md) | `Mjlab-SitStand-Flat-MicroDuck-HD1910` | 已撤回：头壳触地 | 旧姿态检查漏检 |
 | [踢球](examples/kick/README.md) | `Mjlab-BallKick[Left]-Flat[-Backlash]-MicroDuck-HD1910` | ACCEPTED（草案契约） | 通过 |
 | [低头捡物](examples/ground_pick/README.md) | `Mjlab-GroundPick-Flat[-Backlash]-MicroDuck-HD1910` | ACCEPTED（草案契约） | 还没跑 |
 
@@ -71,6 +73,8 @@ PyTorch TunableOp。
 
 ```bash
 source env/activate.sh
+python scripts/check_upstream.py --out-dir logs/upstream-review
+# 先审阅上游变化；以下原生 train 命令不会自行执行该检查。
 train Mjlab-Velocity-Flat-MicroDuck-HD1910 --env.scene.num-envs 4096 --env.sim.njmax 160 \
     --agent.max-iterations 10000 --agent.logger tensorboard
 ```

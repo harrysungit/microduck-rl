@@ -1,0 +1,541 @@
+{
+  "origin": "Project-owned bounded HeadSafe endpoint-reset experiment, adapted into a self-contained public recipe",
+  "snapshot_utc_date": "2026-11-18",
+  "original_source_sha256": {
+    "headsafe_task.py": "2b73faf81d992dd8cd012ca62caea82f81ea281d077420ef46e1079695734766",
+    "runtime_actions.py": "059bdaa4caa086b02781c560f0975107020bd62fcfc41504ba4c90d193dbd1f7",
+    "teacher_init.py": "b6c0c18dd8779c485f0d010c4c8e9b23c1824528b199fe74fd1c7d99a02e6d25",
+    "train_headsafe.py": "4cb083bf9d0f2cd5f591f4d5016a8c35f830c40861418b960deac5fbc8bbce86",
+    "verify_geometry.py": "6a67224f5108ccd3bbb89c414fd9dfad8bbdb52a12ba540232bcd6acc7e5865f",
+    "headsafe_task_v2.py": "7273dbb685f91a0fe593c37fe94953f107b6280ab06e9a97b2f56db407202a60",
+    "operating_profile.py": "bda85469100a1d09c4026258d06a7b8c8ad8c7a669ffc9647a15d2160d042e00",
+    "train_headsafe_v2.py": "c596d4e0d28cb92ac7d58c87e5f204273ca553c283cfda4308f803eca1a6566c"
+  },
+  "adaptations": [
+    "Explicit external calibration, teacher, anchor and output inputs; no private paths or implicit device loading",
+    "Self-contained TargetState and VoltageState from the project-owned deployment alignment implementation",
+    "Full anchor-label teacher check and input/source/settings identity binding",
+    "Recipe checkpoint identity verification and explicit normalizer refreeze on resume",
+    "Parameterized independent boundary CPU audit; all non-PASS results stop additional updates"
+  ],
+  "validation_status": "162 CPU tests passed; independent true-neck-scope teacher stand/sit 13s GPU sensor checks and operating64x5 numerical smoke passed; no final model action acceptance",
+  "deployment_approved": false,
+  "v2_adaptations": [
+    "Explicit five-head-body latch and seven-body substep legal support",
+    "Actual nominal/operating observation and dynamics overlays",
+    "Frozen original teacher online BC on current PPO storage states; actor gradients cleared last during critic warmup"
+  ],
+  "public_gpu_smoke": {
+    "scope": "Numerical training/export/resume validation only; packaging helper added afterwards; no candidate or deployment approval",
+    "common_steps": [
+      120,
+      168
+    ],
+    "iterations": [
+      5,
+      7
+    ],
+    "all_normalizer_buffers_identical": true,
+    "num_envs": 64,
+    "fresh_updates": 5,
+    "critic_warmup_updates": 2,
+    "normalizer_count_both": 0,
+    "profile": "operating",
+    "resume_additional_updates": 2,
+    "head_scope": "historical head-labelled neck-plus-right-hip superset; not anatomical head"
+  },
+  "offline_package_probe": {
+    "scope": "Diagnostic-only smoke package; original native x86 loader accepted contract + one inference",
+    "operating_pass": false,
+    "candidate": false
+  },
+  "head_scope_correction": {
+    "legacy_right_hip": "bearing_roll; excluded from headgate and reported separately",
+    "future_gpu_scope_validation": "Completed independently: nominal teacher stand/sit full13s and operating64x5 warmup2 numerical smoke; see public_truehead_gpu",
+    "archived_reports": "retained as historical superset, never rewritten",
+    "extra_neck_descendants": "included dynamically",
+    "historical_dr": "five-body DR retained unchanged for reproduction",
+    "anatomical_head": [
+      "neck",
+      "neck_pitch",
+      "yaw_roll_motion",
+      "jaw_soft"
+    ],
+    "version": "neck-subtree-v2"
+  },
+  "public_truehead_gpu": {
+    "teacher_control_sample_min_legacy_hip_gap_m": [
+      0.021598175168037415,
+      0.02169131487607956
+    ],
+    "teacher_head_bodies": [
+      "jaw_soft",
+      "neck",
+      "neck_pitch",
+      "yaw_roll_motion"
+    ],
+    "scope": "True neck-subtree-v2; separate from historical superset GPU runs",
+    "teacher_head_or_legacy_hip_contacts": 0,
+    "teacher_head_geometry_count": 52,
+    "teacher_transitions_each": 2,
+    "smoke": {
+      "profile": {
+        "profile": "operating",
+        "imu_misalignment_max_deg": 2.0,
+        "pushes": false,
+        "curriculum": "fixed_by_declared_profile_no_iteration_ramp",
+        "observation_imu_terms": [
+          "base_ang_vel",
+          "projected_gravity"
+        ],
+        "trunk_com_range_m": [
+          -0.003,
+          0.003
+        ],
+        "head_com_range_m": [
+          -0.003,
+          0.003
+        ],
+        "head_com_bodies": [
+          "neck",
+          "neck_pitch",
+          "yaw_roll_motion",
+          "jaw_soft",
+          "bearing_roll"
+        ],
+        "head_com_scope_note": "historical DR superset includes right hip bearing_roll; anatomical head is the neck subtree",
+        "trunk_mass_scale": [
+          0.95,
+          1.05
+        ],
+        "joint_friction_scale": [
+          0.9,
+          1.1
+        ],
+        "armature_scale": [
+          0.9,
+          1.1
+        ],
+        "encoder_bias_rad": [
+          -0.0075,
+          0.0075
+        ],
+        "foot_friction": [
+          0.7,
+          1.3
+        ],
+        "reset_randomization_baseline": "stock dr uses compile-time defaults; BAM friction restores 1 before sampling"
+      },
+      "num_envs": 64,
+      "updates": 5,
+      "critic_warmup_updates": 2,
+      "common_steps": 120,
+      "normalizer_count_after": 0,
+      "normalizer_buffer_assertion": "all imported teacher buffers unchanged each block",
+      "actor_onnx_max_abs_error": 5.960464477539062E-07,
+      "onnx_sha256": "9b1d15cfd0db747c3ca3df8ecd5fb4b29036859fe9117f03b4f43d4ff9c93ce2",
+      "checkpoint_sha256": "0dea9a2efdb0476a6931338128b9d0008d6fd0ac796127d7498b796d3787fbb2",
+      "automatic_smoke": "pass",
+      "new_model_action_validation": "not_performed"
+    },
+    "source_sha256": {
+      "__init__.py": "36cb6564bd40331658ab22dfc93a323ba4b7e9865548d042f31a77cb6986f305",
+      "bootstrap.py": "7f756c0fd09278b1251beb551240b9fd8784c42cf71930eb8f110430a06a2e18",
+      "calibration.py": "651eebf6d528a4ae8e2dffbb283d3846b33e1a58b717b7102a5e819c649c0deb",
+      "collect_anchor.py": "5a9df9f8d33b4c7d27d29c85d787d34c0b5ad4ef6521387dd373f92ed4e19c72",
+      "headsafe_task.py": "4430dc51172c37ee30ca6531ee22bf5ad19fdc1dda2c589a3d0c44fe3f0436da",
+      "operating_profile.py": "996e10794ca7df659425fa7d015c2656f848df4cd7aa15114ba1bd87f12bfd92",
+      "package_review.py": "1c868b5849c75fd0497bf552f7526188b4b2b96d63c82a5d92a6e5eab6719671",
+      "runtime_actions.py": "fea109218166bc5dd924283aea6780a72142ba006b25ebdc5aab40ac850f2b28",
+      "runtime_state.py": "86f527f6706cc650f91439855973c11ed52cfc1b54c1b3d365e6ab3cf32b532f",
+      "teacher_init.py": "38e1e90774287b611abfd0c23f7744476ddab284c9c8452f6c474f051d274b5c",
+      "test_package_review.py": "b8ae048f54a8c54376644ceb686bf0bab86ebfc368a8b5044bc88f136907c172",
+      "test_recipe.py": "505d2b5f38c786faf85d790360ba77ab3f1169869ab925694241249320bfb3e4",
+      "train_headsafe.py": "224bf5f753be5e4e38ba9f5be490ba09c0ae1d6d0f2e9401d5d616b0875e5e23",
+      "verify_geometry.py": "6a67224f5108ccd3bbb89c414fd9dfad8bbdb52a12ba540232bcd6acc7e5865f"
+    },
+    "teacher_policy_sha256": "1c94934c6421ec72ed48079cea74966868a7a59f7d732e0207d0f7bdaeed3c50",
+    "teacher_control_sample_min_head_gap_m": [
+      0.0851590558886528,
+      0.08389578014612198
+    ],
+    "teacher_initial_postures": [
+      "stand",
+      "sit"
+    ],
+    "deployment_approved": false,
+    "teacher_duration_each_s": 13,
+    "human_review": "pending"
+  },
+  "package_evidence_gate": {
+    "actual_full_report_probe": "Original 102-row report and in-memory top-level-pass variant both rejected; original report/model unchanged",
+    "recursive_rejection": [
+      "FAIL",
+      "FAILED",
+      "UNVERIFIED",
+      "head_contact true or nonzero",
+      "automatic_pass not true",
+      "any *_pass=false"
+    ],
+    "regression_tests": 36,
+    "schema": "full-declared-row-audit-v2",
+    "diagnostic_only": "allowed only with explicit operating_pass=false and forced noncandidate metadata",
+    "final_requires": [
+      "automatic_pass=true",
+      "operating_pass=true",
+      "nonempty declared_checks and rows with exactly matching unique identities",
+      "each row full anatomical-head and loaded-sit evidence plus complete physics coverage"
+    ]
+  },
+  "source_line_endings": {
+    "policy": "Git LF; upstream manual snapshot verbatim",
+    "semantic_check": "Python ASTs and JSON values unchanged; prior GPU source byte hashes refer to archived pre-normalization text.",
+    "normalization_report": "source_text_normalization.json"
+  },
+  "legacy_global_calibration_diagnostic_adapter": {
+    "associated_evidence_files": 536,
+    "deployment_approved": false,
+    "default_final_gate": "unchanged; no legacy external locator bypass",
+    "mode": "diagnostic-only explicit external locator",
+    "diagnostic_policy_sha256": "1ea4bad6b0c7e28fadd354d144b5f5c4b5ec5255e1f55e4208fd54fdb78d3211",
+    "primary_holdout_head_contact_rows": 5,
+    "review_only": true,
+    "primary_holdout_failed_rows": 10,
+    "required_hash_bindings": [
+      "initialization.calibration_sha256",
+      "evaluation.calibration_sha256"
+    ],
+    "original_cfg_field_present": false,
+    "primary_holdout_rows": 102,
+    "full_matching_report_snapshot_count": 60,
+    "device_calibration_values_committed": false,
+    "task_resolution": "static archived-source AST paths only, not historical runtime instance observation; original serialized class_type retained",
+    "cpu_full_tests": 196,
+    "runtime_instance_verified": false,
+    "delivery": {
+      "all_report_and_evidence_hashes_verified": true,
+      "artifact": "V2_150_DIAGNOSTIC_REVIEW_ONLY_20261119_v3.zip",
+      "artifact_bytes": 129924158,
+      "native_diagnostic_zip_sha256": "5e425819989cb25e4ccb7942d3daa7157fab94334b0f694b1ea1bbe648316792",
+      "policy_sha256": "1ea4bad6b0c7e28fadd354d144b5f5c4b5ec5255e1f55e4208fd54fdb78d3211",
+      "artifact_sha256": "ba2e0adc6b4920950ad068f2724ed4a21cab07ca838efbf737588ce8ffa178f2",
+      "human_review": "pending",
+      "deployment_approved": false,
+      "checkpoint_sha256": "1672502389af26ddbb32bd349ea90bb31f0df9f4359d3792140e4fd1a1ba1f0e",
+      "native_validation_returncode": 0,
+      "cpu_tests_passed": 196,
+      "candidate": false
+    }
+  },
+  "current_physical_recipe_v6": {
+    "task": "Mjlab-SitStand-Flat-MicroDuck-HD1910-HeadSafeGoalAlignedV6-20261119",
+    "deployment_approved": false,
+    "goals": {
+      "endpoint_height_tolerance_m": 0.015,
+      "stand_success_z_min": 0.1,
+      "sit_z": 0.06505,
+      "stand_z": 0.11596,
+      "sit_success_z_max": 0.075,
+      "spawn_clearance_m": 0.002
+    },
+    "neutral_head_scope": "zero user head command ranges retained; no head tracking certification",
+    "runtime_class_evidence": "observed constructed Env/Command/RuntimeAction snapshot at run time, separate from archived AST",
+    "gpu_proof": {
+      "late_sit_support_gate": {
+        "sit_endpoint_requires_continuous_support": true,
+        "support_gate_timing": "SIT command and alpha>=.98; every physics substep of current control tick; standing and early transition unaffected"
+      },
+      "source_sha256": {
+        "__init__.py": "eee1a7d396c883b4c36ab46b90c80eb7f4ff6de204ff4c803740abd18eced883",
+        "archive_sources.py": "8fc6050e98ee69743da45d2dcfd4d77029f6e7e4ab17cb2f2187d227877df420",
+        "bootstrap.py": "6a39923d58fee2dcf4357f9e39ac8e7faa72bd403c277ecde90e429a962a6b2f",
+        "calibration.py": "2eec7fb8de0954a986cf37056d97e02027e2ae83bb78e9cbeac59198f7e98719",
+        "collect_anchor.py": "ed71d2c69e5531f223938783a020c05e3b0d82b4e7ca49d27a21eb02dd0ebf1a",
+        "endpoint_geometry.py": "ceba0ed35e6e2af8fd12585df96339bef06efecfacf9a406df83602f311e4e90",
+        "goals.py": "1771d95d66a7f226a8fcc4c459f98acb3a5bd4861f2301f3044460f4f6e454d7",
+        "headsafe_task.py": "dde3834da628b719ec29244b3ed0124d3e67ec9e5e94ff26c217dcdf76c0dcc8",
+        "operating_profile.py": "996e10794ca7df659425fa7d015c2656f848df4cd7aa15114ba1bd87f12bfd92",
+        "package_review.py": "f53fec087bc5f347fe226e679c0df97654857ceb90172f4d09a30e52f5fe9c41",
+        "runtime_actions.py": "963a7c297061498a2055bf007aa37a2c83950b11fd692a9f8084488d5d498981",
+        "runtime_identity.py": "b0f150ed93755e555776642736fb42cfe068e3a7c1a34f849c1b8d80293703e2",
+        "runtime_state.py": "cda5d5327927a270962cc6518743bde70e6ca7653846a130f313c66c23bf932f",
+        "support_forces.py": "dc86af5af93cf20edb980071d6443c29849ecadebe0e6c1083fccae2dd426881",
+        "teacher_init.py": "ec2e89e9620916b8374b10d3b129fe9656bd54c1a8adb61af1819755d78dea64",
+        "test_goal_alignment.py": "6586b48088c82b90b99e37b0e66ba46cc581339691c60385bd573852a3245207",
+        "test_package_review.py": "ac0eff7c4fc7330a141f6a85af8f9dc0b64a2a4fc0b21ea71dd58c177bc6c82b",
+        "test_recipe.py": "4994003516e4e5070ade1ad4cbdf08b40f13b6e7a533ab2972d9abd117234fd1",
+        "train_headsafe.py": "7b94b7dbf43ac7166222be63b7017e6b2a4775441258200bdb3f110522612bbc",
+        "verify_geometry.py": "6a67224f5108ccd3bbb89c414fd9dfad8bbdb52a12ba540232bcd6acc7e5865f"
+      },
+      "human_review": "pending",
+      "operating_smoke": {
+        "profile": "operating",
+        "imu_deg": 2.0,
+        "num_envs": 64,
+        "updates": 5,
+        "critic_warmup_updates": 2,
+        "common_steps": 120,
+        "normalizer_count_after": 0,
+        "actor_onnx_max_abs_error": 4.76837158203125E-07,
+        "onnx_sha256": "b2a4e5a93787e8e5c6c7df678912757a1b63144bae76cf6ca45682cf10906ec5",
+        "checkpoint_sha256": "527207ff415cf38e34e43cac66ba4ff94de0e6fa458607843aa565ad8ba24352",
+        "new_model_action_validation": "not_performed"
+      },
+      "deployment_approved": false,
+      "endpoint_geometry": {
+        "method": "floor-compatible compiled CAD FK minimum + clearance; two endpoints only",
+        "spawn_clearance_m": 0.002,
+        "endpoints": {
+          "home": {
+            "root_z_above_floor_m": 0.11918236270437857,
+            "minimum_clearance_m": 0.0019999999999999836,
+            "minimum_geometry_ids": [
+              48,
+              136
+            ],
+            "floor_geometry": "terrain",
+            "floor_contact_geometry_count": 68,
+            "all_floor_contact_geometry_gaps_m": {
+              "2": 0.11418236281957794,
+              "4": 0.11951606434330816,
+              "6": 0.15063468016898135,
+              "8": 0.11818236258418009,
+              "10": 0.1161823626643062,
+              "14": 0.07980263445626545,
+              "16": 0.1161823626643062,
+              "18": 0.1194397102810081,
+              "20": 0.11418236281957794,
+              "22": 0.09668236258612745,
+              "24": 0.07718236296055483,
+              "26": 0.09068236298084735,
+              "28": 0.07718236283919568,
+              "30": 0.08857068133258407,
+              "32": 0.09038756845869121,
+              "34": 0.04982935943567723,
+              "36": 0.049103329568944365,
+              "38": 0.05304353370872381,
+              "40": 0.053159170020748506,
+              "42": 0.07768506826722853,
+              "44": 0.02088460318648284,
+              "46": 0.01194272543690313,
+              "48": 0.0019999999999999836,
+              "50": 0.0039857306605318625,
+              "52": 0.019651064566077632,
+              "54": 0.008111960055755135,
+              "56": 0.16707058706989952,
+              "58": 0.13925637174086583,
+              "60": 0.1721452047829152,
+              "62": 0.16707058706989952,
+              "64": 0.1895878943136988,
+              "66": 0.2153810095261627,
+              "68": 0.22278101004928777,
+              "70": 0.21728100979127954,
+              "72": 0.22078101010782067,
+              "74": 0.22078101010782067,
+              "76": 0.238811010063512,
+              "78": 0.22648100904952506,
+              "80": 0.22478101005486933,
+              "82": 0.21603328066770458,
+              "84": 0.22768100932489937,
+              "86": 0.22727965418065343,
+              "88": 0.22178101005486933,
+              "90": 0.2274810099147209,
+              "92": 0.23221100878255294,
+              "94": 0.2226095267042304,
+              "96": 0.23228101005964788,
+              "98": 0.21433334992508338,
+              "100": 0.21484475282217866,
+              "102": 0.23928100909338632,
+              "104": 0.23221601029150196,
+              "106": 0.24178100983135192,
+              "108": 0.09668236258612745,
+              "110": 0.07718236296055483,
+              "112": 0.07718236283919568,
+              "114": 0.09068236298084735,
+              "116": 0.09038756937808697,
+              "118": 0.08857068133878693,
+              "120": 0.049103329568944365,
+              "122": 0.05315917002695137,
+              "124": 0.05304353363856594,
+              "126": 0.04982935983712306,
+              "128": 0.07768506826722853,
+              "130": 0.011942725436903136,
+              "132": 0.020884603000556126,
+              "134": 0.008111959878715769,
+              "136": 0.002000000380106246,
+              "138": 0.019651064573447796
+            },
+            "root_qpos_address": 0,
+            "joint_targets": {
+              "left_hip_yaw": 0.0,
+              "left_hip_roll": -0.08730000257492065,
+              "left_hip_pitch": -0.4578999876976013,
+              "left_knee": -0.004900000058114529,
+              "left_ankle": 0.453000009059906,
+              "neck_pitch": 0.3490999937057495,
+              "head_pitch": 0.3490999937057495,
+              "head_yaw": 0.0,
+              "head_roll": 0.0,
+              "right_hip_yaw": 0.0,
+              "right_hip_roll": 0.08730000257492065,
+              "right_hip_pitch": 0.4578999876976013,
+              "right_knee": 0.004900000058114529,
+              "right_ankle": -0.453000009059906
+            }
+          },
+          "sit": {
+            "root_z_above_floor_m": 0.06657458425507094,
+            "minimum_clearance_m": 0.0019999999999999983,
+            "minimum_geometry_ids": [
+              36,
+              120
+            ],
+            "floor_geometry": "terrain",
+            "floor_contact_geometry_count": 68,
+            "all_floor_contact_geometry_gaps_m": {
+              "2": 0.06157458437027031,
+              "4": 0.06690828589400052,
+              "6": 0.0980269017196737,
+              "8": 0.06557458413487247,
+              "10": 0.06357458421499858,
+              "14": 0.02719485600695782,
+              "16": 0.06357458421499858,
+              "18": 0.06683193183170048,
+              "20": 0.06157458437027031,
+              "22": 0.04407458413681983,
+              "24": 0.024574584511247204,
+              "26": 0.038074584531539724,
+              "28": 0.02457458438988805,
+              "30": 0.038074584531539724,
+              "32": 0.039574584099089524,
+              "34": 0.0024890325571678557,
+              "36": 0.0019999999999999983,
+              "38": 0.0036970874497975204,
+              "40": 0.0036918518602937003,
+              "42": 0.030176304596374683,
+              "44": 0.004688198363516657,
+              "46": 0.008117177971388955,
+              "48": 0.005103353710169647,
+              "50": 0.0050164871647035356,
+              "52": 0.015000582182011895,
+              "54": 0.009416931916227129,
+              "56": 0.11446280862059192,
+              "58": 0.08664859329155822,
+              "60": 0.11953742633360759,
+              "62": 0.11446280862059192,
+              "64": 0.13698011586439116,
+              "66": 0.16277323107685507,
+              "68": 0.17017323159998013,
+              "70": 0.1646732313419719,
+              "72": 0.16817323165851303,
+              "74": 0.16817323165851303,
+              "76": 0.18620323161420435,
+              "78": 0.17387323060021742,
+              "80": 0.1721732316055617,
+              "82": 0.16342550221839694,
+              "84": 0.17507323087559173,
+              "86": 0.1746718757313458,
+              "88": 0.1691732316055617,
+              "90": 0.17487323146541325,
+              "92": 0.1796032303332453,
+              "94": 0.17000174825492276,
+              "96": 0.17967323161034024,
+              "98": 0.16172557147577574,
+              "100": 0.16223697437287102,
+              "102": 0.18667323064407867,
+              "104": 0.17960823184219432,
+              "106": 0.18917323138204428,
+              "108": 0.04407458413681983,
+              "110": 0.024574584511247204,
+              "112": 0.02457458438988805,
+              "114": 0.038074584531539724,
+              "116": 0.03957458502199994,
+              "118": 0.038074584531539724,
+              "120": 0.0020000000000000018,
+              "122": 0.0036918518602937003,
+              "124": 0.0036970874497975134,
+              "126": 0.0024890330329694066,
+              "128": 0.030176304596374683,
+              "130": 0.00811717797138896,
+              "132": 0.0046881979445200575,
+              "134": 0.009416932223916855,
+              "136": 0.005103352513874386,
+              "138": 0.015000582182011899
+            },
+            "root_qpos_address": 0,
+            "joint_targets": {
+              "left_hip_yaw": 0.0,
+              "left_hip_roll": 0.0,
+              "left_hip_pitch": -0.4079,
+              "left_knee": 1.35,
+              "left_ankle": 0.0,
+              "neck_pitch": 0.3490999937057495,
+              "head_pitch": 0.3490999937057495,
+              "head_yaw": 0.0,
+              "head_roll": 0.0,
+              "right_hip_yaw": 0.0,
+              "right_hip_roll": 0.0,
+              "right_hip_pitch": 0.4079,
+              "right_knee": -1.35,
+              "right_ankle": 0.0
+            }
+          }
+        }
+      },
+      "runtime_classes": {
+        "actual_env": {
+          "class": "headsafe_task.HeadSafeEnv",
+          "definition_source_file": "headsafe_task.py",
+          "definition_source_sha256": "dde3834da628b719ec29244b3ed0124d3e67ec9e5e94ff26c217dcdf76c0dcc8"
+        },
+        "actual_command": {
+          "class": "headsafe_task.CycleCommand",
+          "definition_source_file": "headsafe_task.py",
+          "definition_source_sha256": "dde3834da628b719ec29244b3ed0124d3e67ec9e5e94ff26c217dcdf76c0dcc8"
+        },
+        "actual_runtime_action": {
+          "class": "runtime_actions.RuntimeAction",
+          "definition_source_file": "runtime_actions.py",
+          "definition_source_sha256": "963a7c297061498a2055bf007aa37a2c83950b11fd692a9f8084488d5d498981"
+        }
+      },
+      "old_v2_resume_identity_rejected": true,
+      "teacher_runs": [
+        {
+          "initial_posture": "stand",
+          "policy_sha256": "1c94934c6421ec72ed48079cea74966868a7a59f7d732e0207d0f7bdaeed3c50",
+          "duration_s": 13,
+          "valid_transition_count": 2,
+          "head_contact": false,
+          "legacy_right_hip_contact": false,
+          "head_geometry_count": 52,
+          "head_min_gap_control_sample_m": 0.08523121476173401,
+          "legacy_hip_min_gap_control_sample_m": 0.02149169147014618,
+          "physics_sensor_update_count": 2600,
+          "runtime_instance_verified": true,
+          "video_sha256": "15212adc3013c691906b7159abe3f47365369ecb2024ed5a949cca43b8740137"
+        },
+        {
+          "initial_posture": "sit",
+          "policy_sha256": "1c94934c6421ec72ed48079cea74966868a7a59f7d732e0207d0f7bdaeed3c50",
+          "duration_s": 13,
+          "valid_transition_count": 2,
+          "head_contact": false,
+          "legacy_right_hip_contact": false,
+          "head_geometry_count": 52,
+          "head_min_gap_control_sample_m": 0.08467328548431396,
+          "legacy_hip_min_gap_control_sample_m": 0.022127430886030197,
+          "physics_sensor_update_count": 2600,
+          "runtime_instance_verified": true,
+          "video_sha256": "4aab14dd15755f7a92b9cabe9554380302e3dff09294087976428f57fdad5d6b"
+        }
+      ],
+      "status": "independent public V6 implementation/numerical proof completed; not action acceptance of smoke model"
+    },
+    "resume_compatibility": "old source/goals fingerprints explicitly rejected",
+    "scope": "ordinary nominal/operating physical goals, CAD endpoint spawn, total normal support; no private head-robust routing",
+    "reference_private_task_source_sha256": "de1c78da49ce49b4bd5addd295fb4da8ff20827d01a4000449f05bc2c390c75d",
+    "cpu_tests": 204
+  },
+  "current_recipe_version": "HeadSafeGoalAlignedV6-20261119"
+}

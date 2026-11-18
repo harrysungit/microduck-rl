@@ -1,0 +1,4 @@
+# Keep source fingerprints stable across Windows and Linux checkouts.
+* text=auto eol=lf
+# This provenance-bound upstream snapshot must remain byte-for-byte verbatim.
+docs/upstream/AGENTS.develop.md -text

@@ -499,10 +499,19 @@ def posture_segments(traces: dict, schedule: list) -> list[dict]:
                 row["settled_s"] = 0.0
             elif bad[-1] < len(seg_good) - 1:
                 row["settled_s"] = float(seg_t[bad[-1] + 1] - start)
-            row["ok"] = row["settled_s"] is not None
+            # Require a full stable second, and a genuine change from the opposite posture.
+            origin = (t > start - 0.5 + 1e-9) & (t <= start + 1e-9)
+            opposite = ((z >= STAND_Z_MIN) if sit else (z <= SIT_Z_MAX)) & (tilt < UPRIGHT_DEG)
+            origin_ok = row["transition"] == "hold" or (bool(origin.any()) and bool(opposite[origin].all()))
+            row["origin_posture_ok"] = origin_ok
+            complete = bool(seg_t[-1] >= start + duration - 1e-6)
+            row["schedule_segment_complete"] = complete
+            row["ok"] = bool(row["settled_s"] is not None and row["settled_s"] <= duration - 1.0 + 1e-9
+                             and origin_ok and complete)
             tail = seg & (t > start + duration - 1.0)
-            row.update(z_end=float(z[tail].mean()), tilt_end=float(tilt[tail].mean()),
-                       drift_end=float(speed[tail].mean()))
+            if tail.any():
+                row.update(z_end=float(z[tail].mean()), tilt_end=float(tilt[tail].mean()),
+                           drift_end=float(speed[tail].mean()))
         out.append(row)
         start += duration
         previous = sit
@@ -519,7 +528,8 @@ def kick_summary(traces: dict, start_x: float, start_y: float) -> dict:
 
 
 def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params: Path,
-                record: bool = False, video: Path | None = None) -> dict:
+                record: bool = False, video: Path | None = None, calibration: Path | None = None,
+                schedule_override: list | None = None) -> dict:
     rng = np.random.default_rng(seed)
     policy = Policy(onnx)
     n = len(policy.joint_names)
@@ -528,9 +538,17 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
     data = mujoco.MjData(model)
     servos = Servos(model, policy.joint_names, servo_params, p, level.latency_ms, rng)
     observer = Observer(model, servos, policy.home, level, p, rng)
+    audit = None
+    if level.task == "sitstand":
+        from contact_audit import HeadAudit
+        audit = HeadAudit(model)
+    transform = None
+    if calibration:
+        from runtime_targets import TargetTransform
+        transform = TargetTransform(policy.joint_names, policy.home, calibration, level.lowpass or (.5, .7))
 
     recovery = level.start in LYING
-    schedule = schedule_for(level)
+    schedule = schedule_override if schedule_override is not None else schedule_for(level)
     if recovery:
         data.qpos[0:3], data.qpos[3:7] = (0.0, 0.0, 0.1), LYING[level.start]
         # Small random yaw-free joint offsets so the 16 tries differ.
@@ -551,6 +569,8 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
         data.qpos[qadr:qadr + 7] = (bx, by, BALL_RADIUS, 1.0, 0.0, 0.0, 0.0)
         ball = (qadr, dadr, bx, by)
     mujoco.mj_forward(model, data)
+    if audit:
+        audit.sample(data, 0., 0.)
     servos.reset(data, policy.home.copy())
     observer.reset(data)
 
@@ -579,7 +599,7 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
     traces = {k: [] for k in keys}
     last_action, filtered = np.zeros(n), None
     alpha = None  # the robot's target low-pass: head joints (5-8) and legs
-    if level.lowpass is not None:
+    if level.lowpass is not None and transform is None:
         alpha = np.array([level.lowpass[0] if 5 <= i < 9 else level.lowpass[1] for i in range(n)])
     next_push = rng.uniform(3.0, 6.0)
     ticks = round((RECOVERY_S if recovery else sum(d for d, _, _ in schedule)) / CONTROL_DT)
@@ -591,6 +611,9 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
         command = np.zeros(3) if recovery else command_at(k * CONTROL_DT, schedule)
         action = policy(observer(data, last_action, command))
         target = policy.home + policy.scale * action
+        if transform is not None:
+            supply = max(servos.vin - servos.drop_gain * abs(servos.prev_torque).sum(), VIN_MIN)
+            target = transform(target, supply)
         if alpha is not None:
             filtered = target if filtered is None else alpha * target + (1 - alpha) * filtered
             target = filtered
@@ -602,6 +625,8 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
         for _ in range(substeps):
             torque = servos.step(model, data)
             mujoco.mj_step(model, data)
+            if audit:
+                audit.sample(data, float(data.time - model.opt.timestep), model.opt.timestep)
             steps += 1
             saturated_steps += bool(np.any(np.abs(torque) >= 0.99 * servos.force_limit))
             peak_torque = np.maximum(peak_torque, np.abs(torque))
@@ -676,6 +701,14 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
     }
     if level.task == "sitstand":
         result.update(posture_ok=sum(sgm["ok"] for sgm in segments), posture_total=len(segments))
+        result["safety"] = audit.result()
+        result["safety"]["expected_physics_substeps"] = ticks * substeps
+        result["safety"]["coverage"] = audit.steps / (ticks * substeps)
+        result["automatic_pass"] = bool(all(s["ok"] for s in segments) and not result["safety"]["head_contact"]
+                                        and result["safety"]["min_clearance_m"] >= 0.0 and fell_at is None
+                                        and audit.steps == ticks * substeps)
+        result["human_review"] = "pending"
+        result["deployment_approved"] = False
     if ball:
         result.update(kick_summary(traces, ball[2], ball[3]))
     if record:
@@ -915,7 +948,8 @@ def write_report_sitstand(out: Path, levels: dict, provenance: dict) -> None:
              f"{schedule_text(SIT_FROM_SEAT)}.",
              f"- A posture is reached when the trunk is at most {SIT_Z_MAX * 100:g} cm high for a sit, at least "
              f"{STAND_Z_MIN * 100:g} cm for a stand, and within {UPRIGHT_DEG:g} degrees of upright, from some moment to "
-             "the end of the segment. Settle time counts from the start of the segment. The heights are the training's "
+             "the end of the segment for at least one second. Transitions require the opposite posture before the command. "
+             "Settle time counts from the start of the segment. The heights are the training's "
              "own (SIT_UPRIGHT_Z, STAND_UPRIGHT_Z).",
              f"- Tipped over: trunk tilt above {FELL_DEG:g} degrees at any moment. The training has no fall "
              "termination, so the episode plays on.", "",
@@ -941,6 +975,21 @@ def write_report_sitstand(out: Path, levels: dict, provenance: dict) -> None:
                      f"{mean('torque_saturated_steps'):.1%} | {max(e['peak_torque_nm'] for e in eps):.2f} | "
                      f"{mean('action_rms'):.3f} | {mean('action_rate_rms'):.3f} |")
     lines += ["", "Randomized, push and seated-start rows pool all episodes; peak torque is the largest of them."]
+    lines += ["", "## Mandatory head/neck audit", "",
+              "Endpoint posture success cannot override a head/neck collision. Missing audit data is UNVERIFIED. "
+              "Forces are simulation values. Human full-motion video review is pending; no deployment approval.", "",
+              "| level | automatic cycle passes | head-contact episodes | minimum geometry clearance (mm) | peak single-contact force (N) |",
+              "|---|---|---|---|---|"]
+    for key, r in levels.items():
+        eps = [r["episode"]] if "episode" in r else r["episodes"]
+        audits = [e.get("safety") for e in eps]
+        if not all(a is not None for a in audits):
+            lines.append(f"| {key} | UNVERIFIED | missing | missing | missing |")
+            continue
+        lines.append(f"| {key} | {sum(e.get('automatic_pass', False) for e in eps)}/{len(eps)} | "
+                     f"{sum(a['head_contact'] for a in audits)} | "
+                     f"{min(a['min_clearance_m'] for a in audits) * 1000:.3f} | "
+                     f"{max(a['peak_single_contact_normal_N'] for a in audits):.3f} |")
 
     for key in ("L0", "L3", "L3-backlash"):
         if key in levels and "episode" in levels[key]:
@@ -965,7 +1014,7 @@ def write_report_sitstand(out: Path, levels: dict, provenance: dict) -> None:
                          f"{100 * float(np.median([c['z_end'] for c in col if 'z_end' in c])):.1f} |")
     for key, r in levels.items():
         if "episodes" in r:
-            bad = [e for e in r["episodes"] if e["fell_at_s"] is not None or e["posture_ok"] < e["posture_total"]]
+            bad = [e for e in r["episodes"] if not e.get("automatic_pass", False)]
             if bad:
                 lines += ["", f"{key} problems: " + "; ".join(
                     f"seed {e['seed']}" + (f" tipped over at {e['fell_at_s']:.1f} s" if e["fell_at_s"] is not None else "")

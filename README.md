@@ -25,19 +25,21 @@ What it adds:
   "works" means for a skill before training and gives a verdict after it, and
   an independent sim2sim in plain MuJoCo, away from the training world.
 
-No policy from this repository has run on a robot yet. Trained policies are
-not published yet.
+2026-11-18: SitStand lowstd hit its head in simulation and a hardware trial.
+Its old acceptance is withdrawn; it is not a deployment candidate. Trained
+policies are not published. Read [training rules](AGENTS.md),
+[upstream version checks](docs/REPOSITORIES.zh.md) and the [new sitstand plan](docs/SITSTAND_PLAN.zh.md).
 
 ## Skills
 
-The five skills that pass both checks in simulation. Each example has the
-recipe, the numbers and the known limits.
+Historical skill checks are retained below; SitStand acceptance is withdrawn.
+Automatic metrics do not replace human review of full-motion videos.
 
 | Skill | Task | Acceptance (training world) | Sim2sim (MuJoCo C) |
 |---|---|---|---|
 | [Walk and get up](examples/walk/README.md) | `Mjlab-VelStand-Flat-MicroDuck-HD1910` | ACCEPTED, 1 warning | pass |
 | [Stand up](examples/standup/README.md) | `Mjlab-StandUp-Flat-MicroDuck-HD1910` | ACCEPTED | pass, 46/48 |
-| [Sit and stand](examples/sitstand/README.md) | `Mjlab-SitStand-Flat-MicroDuck-HD1910` | ACCEPTED | pass |
+| [Sit and stand](examples/sitstand/README.md) | `Mjlab-SitStand-Flat-MicroDuck-HD1910` | withdrawn: head impact | legacy posture check missed impact |
 | [Kick](examples/kick/README.md) | `Mjlab-BallKick[Left]-Flat[-Backlash]-MicroDuck-HD1910` | ACCEPTED (draft contract) | pass |
 | [Pick from the ground](examples/ground_pick/README.md) | `Mjlab-GroundPick-Flat[-Backlash]-MicroDuck-HD1910` | ACCEPTED (draft contract) | not run yet |
 

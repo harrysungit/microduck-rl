@@ -2,8 +2,17 @@
 
 `Mjlab-SitStand-Flat-MicroDuck-HD1910`: sits down and stands up on command.
 
-**Status:** accepted in simulation (training world and MuJoCo C sim2sim). Not
-run on a robot. Policy not published yet (sha256 `6f6c06e8…`).
+**Status (2026-11-18): WITHDRAWN / FAILED.** A hardware trial and a substep
+simulation audit exposed head-shell ground impacts. The old endpoint-only
+checks below missed them. Do not deploy ONNX SHA256
+`6f6c06e830d32023556f66d38c495e9b54ff6625448246896221875269e1dc20` (`model_3498.pt`).
+At L3 seed 0, top_head_shell contact occurred at 3.822–3.902 s after a sit
+command at 3 s (peak single-contact simulated normal force 65.943 N).
+The old posture checker still reported 5/5. These are simulation forces,
+not hardware force measurements. The policy remains unpublished.
+
+The following is historical evidence, not the current training recommendation.
+See [the new plan](../../docs/SITSTAND_PLAN.zh.md).
 
 ## Recipe
 
@@ -29,7 +38,7 @@ the noise, not the mean policy, started the descent. The learned std was
 | clean | 84.2% | 99.7% | sit ≥ 80%, stand ≥ 90% |
 | trained | 99.1% | 98.1% | sit ≥ 60%, stand ≥ 60% |
 
-Verdict: **ACCEPTED**.
+Historical verdict: **ACCEPTED — withdrawn on 2026-11-18**.
 
 ## Sim2sim
 

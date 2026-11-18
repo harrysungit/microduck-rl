@@ -16,7 +16,8 @@ were). For each stage:
 - an acceptance check (acceptance_core.py, scripts/acceptance.py): the stage's declared contract run on the policy that
   ships, in the training world, clean and as trained. The verdict is ACCEPTED, FAILED or UNVERIFIED and goes into the
   state, the summary table and the stage's README. A queue whose stages do not all declare an `acceptance` entry (a
-  contract, or "none" on purpose) does not start; "done" means trained, only ACCEPTED means usable.
+  contract, or "none" on purpose) does not start; "done" means trained. ACCEPTED is an automatic result only;
+  full-motion video and human review are still required before considering deployment.
 Stages whose dependencies did not succeed (or whose acceptance FAILED) run their fallback or are skipped; a stage that cannot
 reach its curriculum end before the deadline is deferred. The two-stage gate (stage `gate:
 two_stage`) decides whether stages marked `needs_gate` run. State goes to <queue dir>/state.json,
@@ -501,8 +502,8 @@ class Queue:
         for name, g in self.state["gate"].items():
             lines.append(f"- Gate `{name}`: {'passed' if g.get('passed') else 'failed'} — `{json.dumps(g)}`")
         counts = {v: sum(r.get("verdict") == v for r in self.state["stages"].values()) for v in ac.VERDICTS}
-        lines.append("- Verdicts: " + ", ".join(f"{n} {v}" for v, n in counts.items()) + ". A skill is usable only when "
-                     "ACCEPTED; UNVERIFIED means nothing failed but something was not checked.")
+        lines.append("- Verdicts: " + ", ".join(f"{n} {v}" for v, n in counts.items()) + ". ACCEPTED is automatic only; "
+                     "full-motion video and human review are still required. UNVERIFIED means something was not checked.")
         lines += ["", "| stage | skill | task | status | verdict | iterations | wall time | last mean reward | "
                       "falls/world/min | upright | result |", "|---|---|---|---|---|---|---|---|---|---|---|"]
         for sid in self.state["order"]:
@@ -750,7 +751,17 @@ def main() -> None:
     ap.add_argument("--state", help="state.json of an interrupted queue to continue")
     ap.add_argument("--only", nargs="+", help="run only these stage ids")
     ap.add_argument("--dry-run", action="store_true", help="64 envs, at most 6 iterations, results under the queue dir")
-    Queue(ap.parse_args()).run()
+    ap.add_argument("--reviewed-upstream", help="exact upstream SHA reviewed before keeping the current pin")
+    ap.add_argument("--upstream-review-note", help="reason for keeping the current pin / review report")
+    ap.add_argument("--reviewed-policies", help="exact official policy-catalog revision reviewed")
+    args = ap.parse_args()
+    from check_upstream import check
+    report = check(reviewed_sha=args.reviewed_upstream, note=args.upstream_review_note,
+                   reviewed_policies=args.reviewed_policies)
+    if not report["training_allowed"]:
+        raise SystemExit("Upstream check needs review or failed; see logs/upstream-review/upstream.md. "
+                         "No training was started.")
+    Queue(args).run()
 
 
 if __name__ == "__main__":

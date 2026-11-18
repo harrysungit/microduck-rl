@@ -5,7 +5,8 @@ import shutil
 import sys
 import pytest
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from package_review import DataLoader,actual_task,no_calibration_values,require_evidence,verify_pipeline_source
+from package_review import DataLoader,actual_task,calibration_locator,no_calibration_values,require_evidence,verify_pipeline_source
+from archive_sources import training_adapter
 import yaml
 
 POLICY='1'*64
@@ -113,3 +114,70 @@ def test_task_and_runtime_mapping_are_bound_to_archived_source(tmp_path):
     assert verify_pipeline_source(tmp_path)['state_ast_sha256']
     path=tmp_path/'runtime_state.py';path.write_text(path.read_text().replace('[.7]*5','[.8]*5'))
     with pytest.raises(ValueError,match='algorithm differs'):verify_pipeline_source(tmp_path)
+
+
+def test_legacy_global_calibration_requires_explicit_diagnostic_and_both_hashes(tmp_path):
+    import hashlib
+    source=tmp_path/'runtime_actions.py';source.write_text('CALIBRATION = "never-read-implicit-device-path"\n')
+    external=tmp_path/'external.toml';external.write_text('synthetic external calibration fixture')
+    digest=hashlib.sha256(external.read_bytes()).hexdigest()
+    action={'scale':1.,'use_default_offset':True}
+    init={'calibration_sha256':digest};evidence={'calibration_sha256':digest}
+    clean,actual,locator=calibration_locator(action,init,evidence,source,external,True)
+    assert clean==action and 'calibration' not in clean
+    assert actual==digest and locator['configuration_field_present'] is False
+    assert locator['mode']=='explicit_external_legacy_global'
+    assert str(external) not in str(locator)
+    for initialization,summary,provided,diagnostic in [
+        (init,evidence,external,False),(init,evidence,None,True),
+        ({'calibration_sha256':'bad'},evidence,external,True),(init,{},external,True),
+        (init,{'calibration_sha256':'bad'},external,True)]:
+        with pytest.raises(ValueError):calibration_locator(action,initialization,summary,source,provided,diagnostic)
+
+
+def test_serialized_calibration_locator_is_not_rewritten_in_original_cfg(tmp_path):
+    import hashlib
+    external=tmp_path/'device.toml';external.write_text('synthetic fixture')
+    digest=hashlib.sha256(external.read_bytes()).hexdigest()
+    action={'calibration':str(external),'scale':1.}
+    clean,_,locator=calibration_locator(action,{'calibration_sha256':digest},{},tmp_path/'unused.py')
+    assert action['calibration']==str(external) and 'calibration' not in clean
+    assert locator['configuration_field_present'] is True and locator['mode']=='serialized_action_cfg'
+
+
+def test_archived_v6_inherited_command_builder_is_resolved_without_source_execution(tmp_path):
+    base=tmp_path/'headsafe_task_base.py'
+    base.write_text('''BASE="Mjlab-SitStand-Flat-MicroDuck-HD1910"
+TASK=BASE+"-Base"
+class CycleCommand: pass
+class CycleCommandCfg:
+    def build(self,env): return CycleCommand(self,env)
+def register():
+    cfg.commands['twist']=CycleCommandCfg()
+    register_mjlab_task(TASK,cfg,cfg,agent,runner)
+    return cfg,agent
+''')
+    selected=tmp_path/'headsafe_task_v6.py'
+    selected.write_text('''import headsafe_task_base as base
+BASE=base.BASE
+TASK=BASE+"-MeasuredV6"
+class CycleCommandCfg(base.CycleCommandCfg): pass
+def register():
+    cfg.commands['twist']=CycleCommandCfg()
+    register_mjlab_task(TASK,cfg,cfg,agent,runner)
+    return cfg,agent
+''')
+    task='Mjlab-SitStand-Flat-MicroDuck-HD1910-MeasuredV6'
+    assert actual_task(selected)==task
+    adapter=training_adapter(tmp_path,task)
+    assert adapter['task_source']=='headsafe_task_v6.py'
+    assert adapter['command_callable']=='headsafe_task_base.CycleCommand'
+    assert len(adapter['builder_resolution'])==3
+    with pytest.raises(ValueError):training_adapter(tmp_path,'Mjlab-SitStand-FakeTask')
+    original=selected.read_text()
+    selected.write_text(selected.read_text().replace('TASK=BASE+"-MeasuredV6"','TASK=make_dynamic_task_name()'))
+    with pytest.raises(ValueError):training_adapter(tmp_path,task)
+    selected.write_text(original+'\nTASK="Mjlab-SitStand-ChangedLater"\n')
+    with pytest.raises(ValueError):training_adapter(tmp_path,task)
+    selected.write_text(original.replace('register_mjlab_task(TASK','register_mjlab_task(BASE'))
+    with pytest.raises(ValueError,match='registration'):training_adapter(tmp_path,task)

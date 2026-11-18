@@ -139,3 +139,11 @@ python examples/sitstand_headsafe/package_review.py \
 - physics_substeps与expected_physics_substeps均为正整数且相等，coverage必须明确为1；min_clearance_m有限且非负。
 
 整份报告中的失败行即使被标为非核心或放在更深的结果列表里，也不能被隐藏。缺审计数据、仅operating_pass的局部summary、历史superset范围和不完整physics覆盖都不能包装成final。已经发现的strong/stress失败应原样披露，不得通过删条件、删rows或改顶层标志获得通过；目前此类模型只能生成明显DIAGNOSTIC ONLY的审查材料。
+
+### 归档私有RuntimeAction的诊断兼容
+
+部分旧私有run的RuntimeActionCfg没有`calibration`字段，实际从模块级`runtime_actions.CALIBRATION`加载外部校准。打包器不会向旧cfg伪造该字段：只有`--diagnostic-only`同时显式提供`--calibration /external/device.toml`才接受这种locator；文件SHA必须同时匹配训练`initialization.json`与评估证据`calibration_sha256`。合同仅记录locator来源、原字段缺失事实与hash，不含设备值或校准路径。默认final证据门禁及其缺项/嵌套失败拒绝规则完全不放宽。
+
+打包器按归档AST静态定位声明的任务注册和command builder路径，支持归档内明确的常量/import/字符串拼接及唯一的class build继承链；这不是当年实际运行实例的观察证据，保留原序列化class_type另行说明。V2缺runtime_identity时明确runtime_instance_verified=false；V6实际type/env/source/goals/FK日志可另外交叉核对，不能由AST替代。无法证明的动态任务名、任务名重赋值、未归档/歧义继承或只声明了名字却未实际注册的情况会拒绝，不套用旧base-task合同。
+
+所有输入评估内容原样复制为输出目录的`evaluation-summary.json`，由合同hash绑定，位于四文件导入ZIP之外；不能只交通过行的局部summary。旧V2_150已构造真实DIAGNOSTIC ONLY格式审查包，原生x86 loader通过；同时保留完整60份同模型报告与536个关联文件的时点快照。原102-row truehead holdout仍为10失败、5真实头接触，不能上机；历史superset及改变物理/观测条件的ablation不重标、不混算成独立同条件通过率。诊断模式兼容不等于动作验收，校准文件和模型二进制均未加入公共仓。

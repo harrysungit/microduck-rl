@@ -191,5 +191,40 @@
     "policy": "Git LF; upstream manual snapshot verbatim",
     "semantic_check": "Python ASTs and JSON values unchanged; prior GPU source byte hashes refer to archived pre-normalization text.",
     "normalization_report": "source_text_normalization.json"
+  },
+  "legacy_global_calibration_diagnostic_adapter": {
+    "associated_evidence_files": 536,
+    "deployment_approved": false,
+    "default_final_gate": "unchanged; no legacy external locator bypass",
+    "mode": "diagnostic-only explicit external locator",
+    "diagnostic_policy_sha256": "1ea4bad6b0c7e28fadd354d144b5f5c4b5ec5255e1f55e4208fd54fdb78d3211",
+    "primary_holdout_head_contact_rows": 5,
+    "review_only": true,
+    "primary_holdout_failed_rows": 10,
+    "required_hash_bindings": [
+      "initialization.calibration_sha256",
+      "evaluation.calibration_sha256"
+    ],
+    "original_cfg_field_present": false,
+    "primary_holdout_rows": 102,
+    "full_matching_report_snapshot_count": 60,
+    "device_calibration_values_committed": false,
+    "task_resolution": "static archived-source AST paths only, not historical runtime instance observation; original serialized class_type retained",
+    "cpu_full_tests": 196,
+    "runtime_instance_verified": false,
+    "delivery": {
+      "all_report_and_evidence_hashes_verified": true,
+      "artifact": "V2_150_DIAGNOSTIC_REVIEW_ONLY_20261119_v3.zip",
+      "artifact_bytes": 129924158,
+      "native_diagnostic_zip_sha256": "5e425819989cb25e4ccb7942d3daa7157fab94334b0f694b1ea1bbe648316792",
+      "policy_sha256": "1ea4bad6b0c7e28fadd354d144b5f5c4b5ec5255e1f55e4208fd54fdb78d3211",
+      "artifact_sha256": "ba2e0adc6b4920950ad068f2724ed4a21cab07ca838efbf737588ce8ffa178f2",
+      "human_review": "pending",
+      "deployment_approved": false,
+      "checkpoint_sha256": "1672502389af26ddbb32bd349ea90bb31f0df9f4359d3792140e4fd1a1ba1f0e",
+      "native_validation_returncode": 0,
+      "cpu_tests_passed": 196,
+      "candidate": false
+    }
   }
 }

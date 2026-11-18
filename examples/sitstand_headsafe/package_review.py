@@ -18,6 +18,10 @@ import numpy as np
 import onnx
 import onnxruntime as ort
 import yaml
+if __package__:
+    from .archive_sources import actual_task,training_adapter
+else:
+    from archive_sources import actual_task,training_adapter
 
 JOINTS=('left_hip_yaw','left_hip_roll','left_hip_pitch','left_knee','left_ankle','neck_pitch','head_pitch','head_yaw','head_roll','right_hip_yaw','right_hip_roll','right_hip_pitch','right_knee','right_ankle')
 TERMS=('base_ang_vel','projected_gravity','joint_pos','joint_vel','actions','command','head_command','body_command')
@@ -130,18 +134,37 @@ def no_calibration_values(value):
     elif isinstance(value,list):
         for item in value:no_calibration_values(item)
 
-def actual_task(path):
-    values={}
-    def constant(node):
-        if isinstance(node,ast.Constant) and isinstance(node.value,str):return node.value
-        if isinstance(node,ast.Name):return values[node.id]
-        if isinstance(node,ast.BinOp) and isinstance(node.op,ast.Add):return constant(node.left)+constant(node.right)
-        raise ValueError('Task name must be reconstructible from literal archived source')
-    for node in ast.parse(path.read_text()).body:
-        if isinstance(node,ast.Assign):
-            for target in node.targets:
-                if isinstance(target,ast.Name) and target.id in ('BASE','TASK'):values[target.id]=constant(node.value)
-    return values['TASK']
+def calibration_locator(action,initialization,summary,source,provided=None,diagnostic=False):
+    """Bind an external legacy-global locator without pretending it was serialized."""
+    original=action.get('calibration')
+    present='calibration' in action
+    if provided is not None and not diagnostic:
+        raise ValueError('Explicit external calibration locators are diagnostic-only')
+    if present:
+        if not isinstance(original,str) or not original:raise ValueError('Invalid serialized calibration locator')
+        selected=Path(provided) if provided is not None else Path(original)
+        mode='explicit_external_for_serialized_cfg' if provided is not None else 'serialized_action_cfg'
+    else:
+        if not diagnostic or provided is None:
+            raise ValueError('Legacy-global calibration requires diagnostic-only and explicit --calibration')
+        declared=any(isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='CALIBRATION' for t in node.targets)
+                     for node in ast.parse(Path(source).read_text()).body)
+        if not declared:raise ValueError('Archived source does not establish a module-global CALIBRATION locator')
+        selected=Path(provided);mode='explicit_external_legacy_global'
+    digest=sha(selected)
+    if initialization.get('calibration_sha256')!=digest:
+        raise ValueError('External calibration differs from initialization SHA256')
+    if not present and summary.get('calibration_sha256') is None:
+        raise ValueError('Legacy-global calibration requires explicit evaluation calibration_sha256')
+    if summary.get('calibration_sha256',digest)!=digest:
+        raise ValueError('External calibration differs from evaluation SHA256')
+    record={'mode':mode,'configuration_field_present':present,'calibration_sha256':digest,
+            'configuration_note':'Original action cfg serialized a locator' if present else
+                'Original RuntimeActionCfg had no calibration field; archived module-global CALIBRATION was external',
+            'archive_global_symbol':None if present else 'runtime_actions.CALIBRATION',
+            'external_locator_recorded_without_path_or_values':True}
+    clean=deepcopy(action);clean.pop('calibration',None)
+    return clean,digest,record
 
 def verify_pipeline_source(directory):
     path=directory/'runtime_state.py'
@@ -187,14 +210,11 @@ def build(args):
     action=deepcopy(env['actions']['joint_pos'])
     if action.get('use_default_offset') is not True or action.get('offset')!=0. or action.get('clip') is not None or action.get('scale')!=1.:
         raise ValueError('Unexpected trained joint position mapping')
-    calibration_path=Path(action.pop('calibration'))
-    calibration_digest=sha(calibration_path)
-    if summary.get('calibration_sha256',calibration_digest)!=calibration_digest:raise ValueError('Evaluation calibration hash mismatch')
     initialization=json.loads((args.params.parent/'initialization.json').read_text())
-    if initialization.get('calibration_sha256')!=calibration_digest:raise ValueError('Calibration changed since training initialization')
+    action,calibration_digest,locator=calibration_locator(action,initialization,summary,
+        args.params.parent/'source/runtime_actions.py',getattr(args,'calibration',None),args.diagnostic_only)
     if 'RuntimeAction' not in (args.params.parent/'source/runtime_actions.py').read_text():raise ValueError('Archived RuntimeAction source required')
     action['implementation']={'callable':'runtime_actions.RuntimeAction','source_sha256':sha(args.params.parent/'source/runtime_actions.py')}
-    action['calibration_sha256']=calibration_digest
     robot=env['scene']['entities']['robot']
     joints=[]
     for name in JOINTS:
@@ -217,19 +237,21 @@ def build(args):
     source_hashes={p.name:sha(p) for p in sorted(source_dir.glob('*.py'))}
     recorded_sources={Path(name).name:value for name,value in initialization['source_sha256'].items()}
     if source_hashes!=recorded_sources:raise ValueError('Archived source differs from training initialization hashes')
-    task_sources=[p for p in source_dir.glob('headsafe_task*.py') if 'return CycleCommand(self, env)' in p.read_text()]
-    if len(task_sources)!=1:raise ValueError('Archived actual CycleCommand builder source required')
-    if actual_task(task_sources[0])!=args.task:raise ValueError('Requested task differs from actual archived task registration')
+    adapter=training_adapter(source_dir,args.task)
     pipeline_identity=verify_pipeline_source(source_dir)
     commands=deepcopy(env['commands'])
     commands['twist']['serialized_cfg_class_type']=commands['twist'].get('class_type')
-    commands['twist']['class_type']={'callable':task_sources[0].stem+'.CycleCommand'}
+    commands['twist']['class_type']={'callable':adapter['command_callable']}
+    commands['twist']['class_type_evidence_kind']='static_archived_source_ast_only'
+    commands['twist']['class_type_runtime_instance_verified']=False
     provenance={'training_task':args.task,'checkpoint_sha256':checkpoint_digest,'env_yaml_sha256':sha(env_path),
                 'agent_yaml_sha256':sha(agent_path),'source_sha256':source_hashes,'evaluation_summary_sha256':sha(args.evaluation_summary),
-                'policy_sha256':digest,'calibration_sha256':calibration_digest,'review_only':True,'human_review':'pending',
+                'policy_sha256':digest,'calibration_sha256':calibration_digest,'calibration_locator':locator,
+                'archived_task_adapter':adapter,'review_only':True,'human_review':'pending',
                 'deployment_approved':False,'review_state':state,'onnx_weights_unchanged':True,
-                'command_builder_note':'Actual archived CycleCommandCfg.build overrides inherited serialized class_type',
-                'training_cycle':'initial 0-3s; opposite 3-8s; initial 8-13s; binary command slot unchanged'}
+                'command_builder_note':'Static archived-source builder path only, not an observed historical runtime instance; original serialized class_type retained separately',
+                'training_cycle':'See actual archived command builder and serialized command configuration; no timing inferred from another task',
+                'packager_source_sha256':sha(Path(__file__)),'source_resolver_sha256':sha(Path(__file__).with_name('archive_sources.py'))}
     pipeline={'implementation':'runtime_actions.RuntimeAction','source_sha256':source_hashes['runtime_actions.py'],
               'stage':'external_not_baked_into_onnx','previous_action_observation':'raw_policy_output',
               'reviewed_algorithm_identity':pipeline_identity,
@@ -247,6 +269,9 @@ def build(args):
               'review_only':True,'human_review':'pending','deployment_approved':False}
     no_calibration_values(contract)
     args.out.mkdir(parents=True,exist_ok=False)
+    # Keep every supplied failure/detail outside the four-file import ZIP. The
+    # contract binds this unchanged evidence rather than selecting passing rows.
+    shutil.copyfile(args.evaluation_summary,args.out/'evaluation-summary.json')
     package=args.out/'package';package.mkdir()
     shutil.copyfile(args.onnx,package/'policy.onnx')
     save(package/'deployment-contract.json',contract)
@@ -263,6 +288,8 @@ def build(args):
     with zipfile.ZipFile(archive,'x',compression=zipfile.ZIP_DEFLATED) as bundle:
         for path in sorted(package.iterdir()):bundle.write(path,path.name)
     result={'package_sha256':sha(archive),'policy_sha256':digest,'checkpoint_sha256':checkpoint_digest,
+            'evaluation_summary_file':'evaluation-summary.json','evaluation_summary_sha256':sha(args.evaluation_summary),
+            'calibration_locator':locator,'archived_task_adapter':adapter,
             'review_state':state,'review_only':True,'human_review':'pending','deployment_approved':False,'offline_validation':validation}
     save(args.out/'package-review.json',result)
     return result
@@ -274,6 +301,7 @@ def main():
     parser.add_argument('--task',required=True,help='actual new training task; no base-task aliases')
     parser.add_argument('--name',required=True)
     parser.add_argument('--validator',type=Path,help='optional x86 robotd; ORT_DYLIB_PATH supplied by caller')
+    parser.add_argument('--calibration',type=Path,help='diagnostic-only external locator for legacy-global or moved calibration; hashes must match init/evidence')
     parser.add_argument('--diagnostic-only',action='store_true',help='format probe only; evidence must explicitly deny operating_pass')
     args=parser.parse_args()
     print(json.dumps(build(args),indent=2),flush=True)

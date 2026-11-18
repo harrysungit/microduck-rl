@@ -5,6 +5,9 @@
 `docs/SITSTAND_PLAN.zh.md`。核对实际分支、依赖 commit、配置与进程，历史报告不能替代现状。
 不把开发机连接资料、实机校准值、模型二进制或私密运行文件加入提交。
 
+按用户偏好，常规工作和子代理主要使用 `gpt-6.1-sol`；创建子代理时明确选择模型及推理强度，
+根据具体任务调整，不默认继承更昂贵的主模型配置。
+
 以下规则改编自 Pollen Robotics 的 [官方手册](docs/upstream/AGENTS.develop.md)，来源 commit 和
 SHA256 见 `docs/upstream/source.json`。它是参考快照；这里的适配规则才是本仓库的执行约定。
 

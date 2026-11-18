@@ -2,6 +2,8 @@
 
 这是独立的有界训练配方，继承本扩展包的 HD1910 SitStand 基础任务。目录存在、烟雾测试通过、GPU奖励上升，都不表示动作成功或模型可上机。本配方不包含模型、设备校准、私有运行目录或下载它们的凭据；仅显式执行命令时才读取外部校准并注册实验任务。
 
+当前默认任务为 `Mjlab-SitStand-Flat-MicroDuck-HD1910-HeadSafeGoalAlignedV6-20261119`，仅对齐普通nominal/operating配方的物理目标、FK初态与承重定义；不包含私有head-robust课程路由，也不继承其未证实学习结论。历史V2实现与运行来源保留在Git（例如7bd608f及更早）和下方历史记录中。
+
 ## 准备与输入
 
 先按仓库安装说明准备固定版本训练环境，阅读根 AGENTS、`docs/TRAINING_WORKFLOW.zh.md` 和 `docs/SITSTAND_PLAN.zh.md`。需要 NumPy、SciPy、PyTorch、MuJoCo/mjlab、rsl-rl、onnx/onnxruntime、pytest 与 ffmpeg。使用与任务兼容的61维观测、14维原始 actor 输出 ONNX，包含可兼容 MLP 和观测归一化；不支持任意模型架构。
@@ -30,15 +32,17 @@ python scripts/pose_preflight.py --scene allcollisions --assets /external/cpu-as
   --calibration /external/device.toml --out-dir /external/fullcollision-hold --video
 ```
 
-实测此场景的SIT固定控制平衡约65.05mm，groundcontact约61.5mm。历史V2–V5沿用了61.5mm目标，
-虽宽容差下可通过核心动作检查，仍应在新物理对齐实验中统一修正奖励、分类、command高度和FK初态，
-不能只改其中一个值。当前目录保留对应历史实验实现与来源记录，不能称为已完成最终目标对齐的模型。
+实测此场景的SIT固定控制平衡约65.05mm，groundcontact约61.5mm。历史V2–V5沿用了61.5mm目标，旧报告保持原样。当前默认已统一：PostureGoals stand_z=.11596、sit_z=.06505，reward/classifier/command内部高度/endpoint近高度都使用同一不可变对象，并写入cfg、bootstrap、profile与runtime_identity。SIT成功和末端近高度均封顶.075，stand下界.10；不修改独立CPU最终标准，也不因容差放宽到.077或.080。
 
-以下CPU检查不启动训练或仿真：
+端点初始化按当前编译CAD的floor碰撞mask/显式pair兼容几何求最低点，再留2mm间隙，并forward复核；不再用reward目标+.002。raw allcollisions CAD的HOME/SIT FK root_z约.119182/.066575m、69个可接地geom，旧SIT .0635m启动约穿透1.075mm。这是独立初态问题，不是历次失败的唯一归因；实际编译模型数值随run记录。
+
+承重使用原生netforce世界Z绝对值作为每body总floor normal（平地），与CPU逐接触法向求和一致；maxforce仅单独作诊断。late-SIT（command=SIT且alpha≥.98）末端姿态奖励要求当前控制帧每个物理子步都合法承重；早期过渡与站姿不受该新增末端门控影响，成功仍需完整稳定段。`runtime_identity.json`记录实际构造出的Env/Command/RuntimeAction类型、源码hash、Goals、FK与manager配置；与仅静态AST定位区分。
+
+以下检查不启动训练、不占GPU，包含短CPU几何/传感器回归：
 
 ```bash
 python -m py_compile examples/sitstand_headsafe/*.py
-python -m pytest examples/sitstand_headsafe/test_recipe.py -q
+python -m pytest examples/sitstand_headsafe -q
 python examples/sitstand_headsafe/train_headsafe.py \
   --calibration /external/device.toml --teacher /external/policy.onnx \
   --anchor-data /external/anchor-review/teacher_rollout.npz \
@@ -71,7 +75,7 @@ python examples/sitstand_headsafe/train_headsafe.py \
 
 `--resume /external/previous/model_final.pt` 是 **本配方检查点恢复**：保留actor、critic、optimizer、迭代/全局步计数，并再次显式冻结观测归一化；必须提供相同teacher、anchor、校准、配方源码和训练设置，hash不一致拒绝恢复。新的 `--iterations` 表示追加更新数。仿真episode状态与随机数流未序列化，恢复从新的端点episode开始，不能声称逐位连续。只加载自己信任的检查点。
 
-常规周期检查点和最终检查点均内嵌recipe绑定信息。不要用旧实验检查点冒充这里的resume；更换teacher或数据应开新warm-start run。改变归一化策略需要显式修改配方并记录新实验身份，当前CLI不提供静默解冻。
+常规周期检查点和最终检查点均内嵌recipe绑定信息。GoalAlignedV6与旧V2/source/goal身份不兼容，旧resume会明确拒绝；需要旧行为请使用原Git版本/归档源。不要用旧实验检查点冒充这里的resume；更换teacher或数据应开新warm-start run。改变归一化策略需要显式修改配方并记录新实验身份，当前CLI不提供静默解冻。
 
 ## 已知约束与交付边界
 
@@ -97,7 +101,7 @@ python examples/sitstand_headsafe/train_headsafe.py \
 python examples/sitstand_headsafe/package_review.py \
   --onnx /external/run/policy.onnx --checkpoint /external/run/model_final.pt \
   --params /external/run/params \
-  --task Mjlab-SitStand-Flat-MicroDuck-HD1910-HeadSafeEndpointsV2-20261118 \
+  --task Mjlab-SitStand-Flat-MicroDuck-HD1910-HeadSafeGoalAlignedV6-20261119 \
   --evaluation-summary /external/final-evaluation.json \
   --name 'HeadSafe review' --out /external/review-package
 ```
@@ -147,3 +151,11 @@ python examples/sitstand_headsafe/package_review.py \
 打包器按归档AST静态定位声明的任务注册和command builder路径，支持归档内明确的常量/import/字符串拼接及唯一的class build继承链；这不是当年实际运行实例的观察证据，保留原序列化class_type另行说明。V2缺runtime_identity时明确runtime_instance_verified=false；V6实际type/env/source/goals/FK日志可另外交叉核对，不能由AST替代。无法证明的动态任务名、任务名重赋值、未归档/歧义继承或只声明了名字却未实际注册的情况会拒绝，不套用旧base-task合同。
 
 所有输入评估内容原样复制为输出目录的`evaluation-summary.json`，由合同hash绑定，位于四文件导入ZIP之外；不能只交通过行的局部summary。旧V2_150已构造真实DIAGNOSTIC ONLY格式审查包，原生x86 loader通过；同时保留完整60份同模型报告与536个关联文件的时点快照。原102-row truehead holdout仍为10失败、5真实头接触，不能上机；历史superset及改变物理/观测条件的ablation不重标、不混算成独立同条件通过率。诊断模式兼容不等于动作验收，校准文件和模型二进制均未加入公共仓。
+
+
+## GoalAlignedV6当前验证状态
+
+代码编译和204项CPU回归通过。公共V6已独立运行原teacher nominal站/坐双初态各完整13秒（含正常速度视频），各2次有效转换、0真实head或legacy右髋接触；运行实例记录确认HeadSafeEnv/CycleCommand/RuntimeAction及实际Goals/FK。每个端点的编译模型初始最小间隙都为2mm。另完成ordinary operating64×5、warmup2数值烟雾，normalizer count0且冻结，actor/ONNX最大误差4.77e-7；旧V2 resume身份实际拒绝。所有旧provenance记录保留原scope，没有将旧run重标为新证明。
+
+
+本次普通operating烟雾ONNX为 `b2a4e5a93787e8e5c6c7df678912757a1b63144bae76cf6ca45682cf10906ec5`，只完成数值流程检查，未对该新模型完成动作/压力/留出验收，不能作为上机候选。原teacher为1c94934c…，在新公共V6场景的真实head控制步最小间隙约85.231/84.673mm（站/坐初态），接触锁存逐物理子步；控制采样间隙不冒称全子步最低点。视频均待用户人工核验。未部署，也没有发布私有课程路由的学习结论。

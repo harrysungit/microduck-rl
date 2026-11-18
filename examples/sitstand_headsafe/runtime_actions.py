@@ -47,5 +47,6 @@ class RuntimeAction(JointPositionAction):
 
 @dataclass(kw_only=True)
 class RuntimeActionCfg(JointPositionActionCfg):
+    class_type: type = RuntimeAction
     calibration: str = ''
     def build(self,env):return RuntimeAction(self,env)

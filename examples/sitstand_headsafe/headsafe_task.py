@@ -2,7 +2,7 @@
 
 This task is a learning experiment, never an acceptance or deployment gate.
 """
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 import sys
 import itertools
@@ -10,7 +10,7 @@ import torch
 import mujoco
 import numpy as np
 from scipy.spatial import ConvexHull
-from mjlab.envs import ManagerBasedRlEnv
+from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.managers import RewardTermCfg, TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.sensor.contact_sensor import ContactSensor
@@ -18,11 +18,23 @@ from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls, reg
 from mjlab_microduck.tasks.mdp import SitStandCommand, SitStandCommandCfg
 
 BASE = 'Mjlab-SitStand-Flat-MicroDuck-HD1910'
-TASK = BASE + '-HeadSafeEndpointsV2-20261118'
+TASK = BASE + '-HeadSafeGoalAlignedV6-20261119'
 if __package__:
-    from .runtime_actions import RuntimeActionCfg, NAMES, SIT
+    from .runtime_actions import RuntimeAction, RuntimeActionCfg, NAMES, SIT
+    from .goals import PostureGoals, target_height, posture_height_masks, endpoint_height_mask
+    from .endpoint_geometry import ground_spawn
+    from .support_forces import loaded_support_bodies, late_sit_support_mask
 else:
-    from runtime_actions import RuntimeActionCfg, NAMES, SIT
+    from runtime_actions import RuntimeAction, RuntimeActionCfg, NAMES, SIT
+    from goals import PostureGoals, target_height, posture_height_masks, endpoint_height_mask
+    from endpoint_geometry import ground_spawn
+    from support_forces import loaded_support_bodies, late_sit_support_mask
+
+@dataclass(kw_only=True)
+class HeadSafeEnvCfg(ManagerBasedRlEnvCfg):
+    posture_goals: PostureGoals = field(default_factory=PostureGoals)
+    sit_endpoint_requires_continuous_support: bool = True
+
 
 HEAD_BODIES = ('neck', 'neck_pitch', 'yaw_roll_motion', 'jaw_soft')
 LEGACY_HIP_BODY = 'bearing_roll'  # right hip yaw; upstream DR list retains its historical mistake
@@ -67,8 +79,10 @@ class LatchedContactCfg(ContactSensorCfg):
 
 
 class LegalSupportSensor(ContactSensor):
-    """Both sides (hip/upper-leg/shank) or trunk, at every physics substep."""
+    """Both sides or trunk, using native world-frame netforce Z on a flat floor."""
     def initialize(self,*args,**kwargs):
+        if self.cfg.reduce!='netforce' or self.cfg.num_slots!=1:
+            raise ValueError('Legal support requires one native world netforce slot per body')
         super().initialize(*args,**kwargs)
         self.body_order=list(dict.fromkeys(slot.primary_name for slot in self._slots))
         short=[name.split('/')[-1] for name in self.body_order]
@@ -79,7 +93,7 @@ class LegalSupportSensor(ContactSensor):
 
     def update(self,dt):
         super().update(dt)
-        loaded=(self.data.found>0) & (self.data.force[...,0].abs()>.05)
+        loaded=loaded_support_bodies(self.data.found,self.data.force)
         valid=loaded[:,self.trunk] | (loaded[:,self.left].any(-1) & loaded[:,self.right].any(-1))
         self.valid_history.copy_(torch.cat((valid[:,None],self.valid_history[:,:-1]),-1))
 
@@ -113,6 +127,7 @@ class CycleCommand(SitStandCommand):
 
 @dataclass(kw_only=True)
 class CycleCommandCfg(SitStandCommandCfg):
+    class_type: type = CycleCommand
     def build(self, env):
         return CycleCommand(self, env)
 
@@ -189,8 +204,7 @@ def state(env):
     upright = (-d.projected_gravity_b[:,2]).clamp(-1,1)
     slow = (d.root_link_lin_vel_w[:,2].abs()<.02) & (d.root_link_ang_vel_b.norm(dim=-1)<.5)
     # Endpoints use measured heights; classification also requires uprightness.
-    stand = (z-.1158).abs()<.012
-    sit = (z-.0615).abs()<.012
+    stand, sit = posture_height_masks(z, env.goals)
     joints=d.joint_pos[:,env.motor_ids]
     home=d.default_joint_pos[:,env.motor_ids]
     sitting=home.clone()
@@ -229,7 +243,7 @@ def head_failure(env):
 def height_tracking(env):
     s = state(env)
     alpha = env.command_manager.get_term('twist').alpha
-    target = .1158 + alpha*(.0615-.1158)
+    target = target_height(alpha, env.goals)
     # No interpolated joint reference: an infeasible FK blend is not rewarded.
     return torch.exp(-((s['z']-target)/.025).square()) * s['upright'].clamp(min=0).pow(4) * (~s['failed'])
 
@@ -243,9 +257,12 @@ def endpoint_pose(env):
         target[:,idx] += s['command']*(value-target[:,idx])
     legs = [0,1,2,3,4,9,10,11,12,13]
     error = (d.joint_pos[:,ids][:,legs]-target[:,legs]).square().mean(-1)
-    target_z = .1158+s['command']*(.0615-.1158)
-    near = (s['z']-target_z).abs()<.015
-    return torch.exp(-error/.16)*near*s['upright'].clamp(min=0).pow(4)*(~s['failed'])
+    near = endpoint_height_mask(s['z'], s['command'], env.goals)
+    reward=torch.exp(-error/.16)*near*s['upright'].clamp(min=0).pow(4)*(~s['failed'])
+    if env.cfg.sit_endpoint_requires_continuous_support:
+        alpha=env.command_manager.get_term('twist').alpha
+        reward*=late_sit_support_mask(s['command'],alpha,env.scene['sit_support'].valid_history)
+    return reward
 
 
 def transition_bonus(env):
@@ -267,6 +284,10 @@ def clearance_cost(env):
 
 
 class HeadSafeEnv(ManagerBasedRlEnv):
+    def __init__(self, cfg, *args, **kwargs):
+        self.goals = cfg.posture_goals
+        super().__init__(cfg, *args, **kwargs)
+
     def _reset_idx(self, env_ids=None):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
@@ -281,6 +302,16 @@ class HeadSafeEnv(ManagerBasedRlEnv):
             self.safety['success_count'] = torch.zeros_like(z,dtype=torch.long)
             self.head_clearance = GeometryClearance(self)
             self.legacy_hip_clearance = GeometryClearance(self,body_names=(LEGACY_HIP_BODY,))
+            home = dict(zip(robot.joint_names, robot.data.default_joint_pos[0].detach().cpu().tolist()))
+            seated = dict(home)
+            for index, value in SIT.items():
+                seated[NAMES[index]] = value
+            self.endpoint_spawns = {label:ground_spawn(self.sim.mj_model, joints, clearance=self.goals.spawn_clearance_m)
+                                    for label,joints in [('home',home),('sit',seated)]}
+            self.endpoint_geometry={'method':'floor-compatible compiled CAD FK minimum + clearance; two endpoints only',
+                                    'spawn_clearance_m':self.goals.spawn_clearance_m,'endpoints':self.endpoint_spawns}
+            self.endpoint_spawn_z = torch.tensor([self.endpoint_spawns[label]['root_z_above_floor_m']
+                                                 for label in ('home','sit')], device=self.device)
         n = len(env_ids)
         posture = (torch.rand(n,device=self.device)<.5).float()
         if hasattr(self,'initial_pose_override'):
@@ -293,7 +324,7 @@ class HeadSafeEnv(ManagerBasedRlEnv):
         robot.write_joint_state_to_sim(q,torch.zeros_like(q),env_ids=env_ids)
         root = torch.zeros(n,13,device=self.device)
         root[:,:3] = self.scene.terrain.env_origins[env_ids]
-        root[:,2] += .1158+posture*(.0615-.1158)+.002
+        root[:,2] += torch.where(posture>.5, self.endpoint_spawn_z[1], self.endpoint_spawn_z[0])
         root[:,3] = 1.
         robot.write_root_state_to_sim(root,env_ids=env_ids)
         for value in self.safety.values():
@@ -303,10 +334,11 @@ class HeadSafeEnv(ManagerBasedRlEnv):
         self._safety_tick = -1
 
 
-def register(num_envs=64, calibration=None):
+def register(num_envs=64, calibration=None, goals=None):
     if calibration is None:
         raise ValueError('An external device calibration is required')
-    cfg = load_env_cfg(BASE)
+    base = load_env_cfg(BASE)
+    cfg = HeadSafeEnvCfg(**vars(base), posture_goals=goals or PostureGoals())
     from microduck_rl.actuators.hd1910.robot import MICRODUCK_ALLCOLLISIONS_HD1910_ROBOT_CFG
     cfg.scene.entities['robot']=MICRODUCK_ALLCOLLISIONS_HD1910_ROBOT_CFG
     cfg.seed = 181126
@@ -315,9 +347,12 @@ def register(num_envs=64, calibration=None):
     cfg.sim.njmax, cfg.sim.nconmax = 320,256
     cfg.scene.sensors = (*cfg.scene.sensors, LatchedContactCfg(name='head_ground',primary=ContactMatch(mode='subtree',pattern='neck',entity='robot'),secondary=ContactMatch(mode='body',pattern='terrain'),fields=('found','force','dist'),reduce='maxforce',num_slots=1,history_length=cfg.decimation))
     cfg.scene.sensors=(*cfg.scene.sensors,LatchedContactCfg(name='legacy_hip_ground',primary=ContactMatch(mode='body',pattern='bearing_roll',entity='robot'),secondary=ContactMatch(mode='body',pattern='terrain'),fields=('found','force','dist'),reduce='maxforce',num_slots=1,history_length=cfg.decimation))
-    cfg.scene.sensors=(*cfg.scene.sensors,LegalSupportCfg(name='sit_support',primary=ContactMatch(mode='body',pattern=r'^(trunk_base|hip_l|upper_leg_left|leg|bearing_roll|hip_l_2|upper_leg_right|leg_2)$',entity='robot'),secondary=ContactMatch(mode='body',pattern='terrain'),fields=('found','force'),reduce='maxforce',num_slots=1,history_length=cfg.decimation))
-    cfg.commands['twist'] = CycleCommandCfg(**vars(cfg.commands['twist']))
-    cfg.actions['joint_pos'] = RuntimeActionCfg(**asdict(cfg.actions['joint_pos']), calibration=str(Path(calibration).resolve()))
+    cfg.scene.sensors=(*cfg.scene.sensors,LegalSupportCfg(name='sit_support',primary=ContactMatch(mode='body',pattern=r'^(trunk_base|hip_l|upper_leg_left|leg|bearing_roll|hip_l_2|upper_leg_right|leg_2)$',entity='robot'),secondary=ContactMatch(mode='body',pattern='terrain'),fields=('found','force'),reduce='netforce',global_frame=False,num_slots=1,history_length=cfg.decimation))
+    cfg.scene.sensors=(*cfg.scene.sensors,ContactSensorCfg(name='sit_support_max_contact',primary=ContactMatch(mode='body',pattern=r'^(trunk_base|hip_l|upper_leg_left|leg|bearing_roll|hip_l_2|upper_leg_right|leg_2)$',entity='robot'),secondary=ContactMatch(mode='body',pattern='terrain'),fields=('found','force'),reduce='maxforce',num_slots=1,history_length=cfg.decimation))
+    cfg.commands['twist'] = CycleCommandCfg(**{**vars(cfg.commands['twist']),'class_type':CycleCommand})
+    cfg.commands['twist'].stand_z = cfg.posture_goals.stand_z
+    cfg.commands['twist'].sit_z = cfg.posture_goals.sit_z
+    cfg.actions['joint_pos'] = RuntimeActionCfg(**{**asdict(cfg.actions['joint_pos']),'class_type':RuntimeAction}, calibration=str(Path(calibration).resolve()))
     # First bounded experiment: nominal dynamics, fixed neutral head. Capability
     # evidence, not update count, is required before adding disturbances.
     keep = {'expand_bam_friction_fields','reset_action_history'}

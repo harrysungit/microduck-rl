@@ -16,9 +16,11 @@ import numpy as np
 if __package__:
     from .bootstrap import sha,bind_inputs,require_resume_identity,validate_anchor
     from .calibration import load_calibration
+    from .goals import PostureGoals
 else:
     from bootstrap import sha,bind_inputs,require_resume_identity,validate_anchor
     from calibration import load_calibration
+    from goals import PostureGoals
 
 HERE=Path(__file__).resolve().parent
 REPO=HERE.parents[1]
@@ -52,7 +54,8 @@ def main():
     if args.review_every and (args.assets is None or not args.assets.is_dir()):ap.error('--assets directory required for video reviews')
     load_calibration(args.calibration)
     anchor_obs,anchor_actions,label_check=validate_anchor(args.teacher,args.anchor_data)
-    settings={'num_envs':args.num_envs,'anchor_coef':args.anchor_coef,'exploration_std':args.exploration_std,
+    goals=PostureGoals()
+    settings={'posture_goals':goals.record(),'num_envs':args.num_envs,'anchor_coef':args.anchor_coef,'exploration_std':args.exploration_std,
               'seed':181126,'height_tracking_weight':1.,'command_ramp_s':.4,'learning_rate':3e-5,
               'profile':args.profile,'online_anchor_coef':args.online_anchor_coef,'critic_warmup_updates':args.critic_warmup_updates}
     sources=sorted(HERE.glob('*.py'))
@@ -74,17 +77,20 @@ def main():
         from .teacher_init import initialize,freeze_normalizer,assert_normalizer_unchanged,actor_warmup
         from .operating_profile import apply
         from .verify_geometry import verify
+        from .runtime_identity import snapshot
     else:
         import headsafe_task as task
         from teacher_init import initialize,freeze_normalizer,assert_normalizer_unchanged,actor_warmup
         from operating_profile import apply
         from verify_geometry import verify
+        from runtime_identity import snapshot
     from mjlab.rl import RslRlVecEnvWrapper
     from mjlab.tasks.registry import load_runner_cls
     from mjlab.utils.os import dump_yaml
     from mjlab.rl.exporter_utils import attach_metadata_to_onnx,get_base_metadata
-    cfg,agent=task.register(args.num_envs,args.calibration)
+    cfg,agent=task.register(args.num_envs,args.calibration,goals=goals)
     profile_record=apply(cfg,args.profile)
+    profile_record['posture_goals']=goals.record()
     (args.out/'profile.json').write_text(json.dumps(profile_record,indent=2))
     cfg.rewards['height_tracking'].weight=1.
     cfg.commands['twist'].ramp_s=.4
@@ -100,6 +106,8 @@ def main():
         gap=env.head_clearance(env)
         assert gap.min()>.012 and not env.scene['head_ground'].ever_found.any()
         geometry_check=verify(env)
+        runtime_record=snapshot(env,task.TASK,profile_record)
+        (args.out/'runtime_identity.json').write_text(json.dumps(runtime_record,indent=2))
         env.safety['failed'][0]=True
         env._safety_tick=env.common_step_counter
         for name in ('height_tracking','endpoint_pose','transition_bonus'):assert getattr(task,name)(env)[0]==0,name
@@ -154,7 +162,7 @@ def main():
         initial={**binding,**imported,'initialization':mode,'resume_checkpoint_sha256':sha(args.resume) if args.resume else None,
                  'optimizer_inherited':bool(args.resume),'critic_inherited':bool(args.resume),'counter_inherited':bool(args.resume),
                  'iteration_before':start_iteration,'common_step_counter_before':start_steps,
-                 'geometry_check':geometry_check,'human_review':'pending','deployment_approved':False}
+                 'geometry_check':geometry_check,'task_id':task.TASK,'runtime_identity':runtime_record,'posture_goals':goals.record(),'endpoint_spawns':env.endpoint_spawns,'human_review':'pending','deployment_approved':False}
         initial['profile_record']=profile_record
         (args.out/'initialization.json').write_text(json.dumps(initial,indent=2))
         (args.out/'source').mkdir()
@@ -198,7 +206,7 @@ def main():
         result={**initial,'updates_requested':args.iterations,'updates_completed':done,'stopped_reason':stop,
                 'iteration_after':runner.current_learning_iteration,'common_step_counter_after':env.common_step_counter,
                 'new_env_transitions':(env.common_step_counter-start_steps)*args.num_envs,'wall_seconds':time.monotonic()-start,
-                'checkpoint_sha256':sha(final),'onnx_sha256':sha(args.out/'policy.onnx'),'actor_onnx_max_abs_error':error,
+                'checkpoint_sha256':sha(final),'onnx_sha256':sha(args.out/'policy.onnx'),'actor_onnx_max_abs_error':error,'normalizer_count_after':policy.obs_normalizer.count.item(),
                 'anchor_mse_mean':float(np.mean(anchor_losses)) if anchor_losses else None,'reviews':reviews,
                 'online_anchor_mse_mean':float(np.mean(online_losses)) if online_losses else None,
                 'automatic_smoke':'pass','action_validation':'pending_independent_checks_and_human_video_review'}

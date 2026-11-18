@@ -35,6 +35,7 @@ def main():
     else:
         from operating_profile import apply
     profile_record=apply(cfg,args.profile)
+    profile_record['posture_goals']=cfg.posture_goals.record()
     cfg.auto_reset=False
     cfg.episode_length_s=13.1
     cfg.terminations.pop('head_contact')
@@ -46,6 +47,12 @@ def main():
     env=task.HeadSafeEnv(cfg,'cuda:0',render_mode='rgb_array')
     env.initial_pose_override=float(args.initial_posture=='sit')
     obs,_=env.reset()
+    if __package__:
+        from .runtime_identity import snapshot
+    else:
+        from runtime_identity import snapshot
+    runtime_record=snapshot(env,task.TASK,profile_record)
+    (args.out/'runtime_identity.json').write_text(json.dumps(runtime_record,indent=2))
     session=ort.InferenceSession(str(args.teacher),providers=['CPUExecutionProvider'])
     name=session.get_inputs()[0].name
     raw=args.out/'full_raw.mp4'
@@ -87,6 +94,8 @@ def main():
     result['legacy_right_hip_min_gap_control_sample_m']=min(r['legacy_right_hip_gap_control_sample_m'] for r in rows)
     result['legacy_head_labelled_superset_contact']=result['head_contact'] or result['legacy_right_hip_contact']
     result['legacy_head_labelled_superset_min_gap_control_sample_m']=min(result['min_full_head_gap_control_sample_m'],result['legacy_right_hip_min_gap_control_sample_m'])
+    result['task_id']=task.TASK
+    result['runtime_identity_sha256']=hashlib.sha256((args.out/'runtime_identity.json').read_bytes()).hexdigest()
     result['profile_record']=profile_record
     result['initial_posture']=args.initial_posture
     result['command_schedule']='stand-sit-stand' if args.initial_posture=='stand' else 'sit-stand-sit'

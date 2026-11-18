@@ -17,6 +17,11 @@
 识别官方来源请看 upstream 和固定 commit，不能把过期 remote 当成当前依赖缺失。
 2026-11-19 已把现有开发环境依赖 checkout 的 origin 修正为官方地址，固定 commit 未升级。
 
+“官方完整源码”指该 commit 已纳入 Git 的文件。固定版本及本次核对的官方 develop 都在
+`.gitignore` 排除了 `claude_experiments/`、训练日志以及 PT、ONNX、NPZ 等产物；
+手册提到的部分实验脚本不在 Git 树中，完整 clone 也不会得到它们。
+复现实验还须取得对应脚本、配置、数据和权重，并逐项校验来源，不能把缺少这些产物归因于本地漏同步。
+
 ## 怎么知道官方更新了
 
 ```bash

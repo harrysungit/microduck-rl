@@ -22,6 +22,18 @@ python examples/sitstand_headsafe/collect_anchor.py \
 
 ## 检查与运行
 
+先检查本配方实际使用的完整碰撞场景；基础SitStand的groundcontact前检不能代替它：
+
+```bash
+python scripts/sim2sim_assets.py --out-dir /external/cpu-assets
+python scripts/pose_preflight.py --scene allcollisions --assets /external/cpu-assets \
+  --calibration /external/device.toml --out-dir /external/fullcollision-hold --video
+```
+
+实测此场景的SIT固定控制平衡约65.05mm，groundcontact约61.5mm。历史V2–V5沿用了61.5mm目标，
+虽宽容差下可通过核心动作检查，仍应在新物理对齐实验中统一修正奖励、分类、command高度和FK初态，
+不能只改其中一个值。当前目录保留对应历史实验实现与来源记录，不能称为已完成最终目标对齐的模型。
+
 以下CPU检查不启动训练或仿真：
 
 ```bash

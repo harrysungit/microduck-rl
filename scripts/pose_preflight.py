@@ -42,9 +42,11 @@ def home_targets(names):
 
 def run(args, pose, seed):
     rng = np.random.default_rng(seed)
-    level = sim.Level("pose", "Fixed pose diagnostic", scene="groundcontact", collisions="groundcontact",
+    scene_name = getattr(args, "scene", "groundcontact")
+    level = sim.Level("pose", "Fixed pose diagnostic", scene=scene_name,
+                      collisions="groundcontact" if scene_name == "groundcontact" else "authored",
                       vin=args.vin, task="sitstand")
-    scene = args.assets / "scene_hd1910_groundcontact.xml"
+    scene = args.assets / f"scene_hd1910_{scene_name}.xml"
     raw = mujoco.MjModel.from_xml_path(str(scene))
     names = [raw.joint(int(raw.actuator_trnid[a, 0])).name for a in range(raw.nu)]
     home = home_targets(names)
@@ -156,6 +158,8 @@ def run(args, pose, seed):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--assets", required=True, type=Path)
+    ap.add_argument("--scene", choices=["groundcontact", "allcollisions"], default="groundcontact",
+                    help="match the actual training collision model; HeadSafe uses allcollisions")
     ap.add_argument("--out-dir", required=True, type=Path)
     ap.add_argument("--video", action="store_true")
     ap.add_argument("--cycle", action="store_true", help="diagnose a 2-second joint-target blend; this is not a learned policy")
@@ -178,7 +182,8 @@ def main():
               "servo_sha256": sha(sim.SERVO_PARAMS), "script_sha256": sha(__file__),
               "calibration_sha256": sha(args.calibration) if args.calibration else None,
               "runtime_target_source_sha256": sha(Path(__file__).with_name("runtime_targets.py")),
-              "assets_sha256": {p.name: sha(p) for p in sorted(args.assets.glob("*groundcontact.xml"))},
+              "scene": args.scene,
+              "assets_sha256": {p.name: sha(p) for p in sorted(args.assets.glob(f"*{args.scene}.xml"))},
               "rows": []}
     try:
         for pose in (("cycle",) if args.cycle else ("stand", "sit")):

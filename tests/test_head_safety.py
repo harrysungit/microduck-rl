@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import acceptance_core as ac
-from contact_audit import Geometry, HeadAudit
+from contact_audit import Geometry, HeadAudit, legal_sit_support
 import sim2sim
 
 
@@ -98,3 +98,89 @@ def test_mesh_clearance_accounts_for_compiler_mesh_frame_and_world_rotation():
     # The compiler recenters/reorients the mesh. Compare against the original authored vertices in body space.
     expected = .2 + (vertices @ data.xmat[1].reshape(3, 3)[2]).min()
     assert Geometry(model).minimum_z(data, 0) == pytest.approx(expected, abs=1e-8)
+
+
+def test_sit_support_requires_loaded_non_foot_bodies_on_both_sides_or_torso():
+    assert not legal_sit_support({"ankle_left": 4., "ankle_right": 4.})
+    assert not legal_sit_support({"leg": 4., "ankle_right": 4.})
+    assert not legal_sit_support({"leg": .05, "leg_2": .05})
+    assert legal_sit_support({"leg": .051, "leg_2": .051})
+    assert legal_sit_support({"upper_leg_left": 2., "hip_l_2": 2.})
+    assert legal_sit_support({"trunk_base": 1.})
+
+
+def test_substep_audit_records_loaded_support_not_merely_geometric_contact():
+    model = mujoco.MjModel.from_xml_string(XML.replace('</worldbody>', '''
+      <body name="leg" pos="-.05 0 .019"><freejoint/><geom type="box" size=".02 .02 .02" mass=".1"/></body>
+      <body name="leg_2" pos=".05 0 .019"><freejoint/><geom type="box" size=".02 .02 .02" mass=".1"/></body>
+      </worldbody>'''))
+    data = mujoco.MjData(model)
+    audit = HeadAudit(model, body_names=("neck", "jaw_soft"))
+    mujoco.mj_step(model, data)
+    audit.sample(data, 0., .002)
+    result = audit.result()
+    assert len(result["support_substep_trace"]) == 1
+    time, loaded, legal = result["support_substep_trace"][0]
+    assert time == 0. and loaded["leg"] > .05 and loaded["leg_2"] > .05
+    assert legal
+
+
+def test_posture_acceptance_requires_verified_legal_seat_and_cannot_relax_it():
+    criteria = ac.effective_criteria('posture', {'clean': {'legal_sit_support_min': 0.}})
+    assert criteria['clean']['legal_sit_support_min'] == 1.
+    metrics = {variant: {'sit_down': 1., 'stand_up': 1., 'tipped': 0., 'head_contact': 0.,
+                         'head_audit_coverage': 1.} for variant in ac.VARIANTS}
+    assert ac.decide(ac.evaluate(metrics, criteria))[0] == 'UNVERIFIED'
+    for row in metrics.values():
+        row['legal_sit_support'] = 0.
+    assert ac.decide(ac.evaluate(metrics, criteria))[0] == 'FAILED'
+
+
+ANATOMY_XML='''<mujoco><option timestep=".002"/><worldbody>
+<geom name="floor" type="plane" size="1 1 .1"/>
+<body name="trunk_base" pos="0 0 .2"><freejoint/><geom type="sphere" size=".01" mass=".1"/>
+ <body name="neck" pos="0 0 .15"><geom name="neck_shell" type="box" size=".02 .02 .02" mass=".1"/>
+  <body name="neck_pitch" pos="0 0 .03"><geom type="sphere" size=".01" mass=".01"/>
+   <body name="yaw_roll_motion" pos="0 0 .03"><geom type="sphere" size=".01" mass=".01"/>
+    <body name="jaw_soft" pos="0 0 .03"><geom name="top_head_shell" type="sphere" size=".02" mass=".1"/>
+     <body name="extra_head_part" pos="0 0 .1"><geom type="capsule" size=".01 .02" mass=".01"/></body>
+    </body>
+   </body>
+  </body>
+ </body>
+ <body name="bearing_roll" pos=".1 0 -.181"><geom name="right_hip_shell" type="box" size=".02 .02 .02" mass=".1"/></body>
+</body></worldbody></mujoco>'''
+
+
+def test_neck_tree_covers_extra_descendant_but_right_hip_is_not_head():
+    model=mujoco.MjModel.from_xml_string(ANATOMY_XML)
+    data=mujoco.MjData(model);mujoco.mj_forward(model,data)
+    audit=HeadAudit(model);audit.sample(data,0.,.002)
+    result=audit.result()
+    assert set(result['head_bodies'])=={'neck','neck_pitch','yaw_roll_motion','jaw_soft','extra_head_part'}
+    assert not result['head_contact'] and result['min_clearance_m']==pytest.approx(.33)
+    assert result['legacy_right_hip']['contact'] and result['legacy_right_hip']['parent_body']=='trunk_base'
+    assert result['legacy_right_hip']['min_clearance_m']==pytest.approx(-.001)
+    assert result['legacy_superset']['contact'] and result['legacy_superset']['min_clearance_m']==pytest.approx(-.001)
+    assert result['legacy_superset']['min_clearance_geometry']=='bearing_roll/right_hip_shell'
+    assert 'bearing_roll' in result['non_head_ground_bodies']
+    assert legal_sit_support({'bearing_roll':1.,'leg':1.})
+
+
+def test_jaw_hit_still_fails_true_head_scope_after_later_recovery():
+    model=mujoco.MjModel.from_xml_string(ANATOMY_XML)
+    data=mujoco.MjData(model);audit=HeadAudit(model)
+    model.body_pos[model.body('jaw_soft').id,2]=-.4
+    mujoco.mj_forward(model,data);audit.sample(data,1.,.002)
+    model.body_pos[model.body('jaw_soft').id,2]=.03
+    mujoco.mj_forward(model,data);audit.sample(data,2.,.002)
+    result=audit.result()
+    assert result['head_contact'] and result['first_contact_s']==1.
+    assert 'jaw_soft/top_head_shell' in result['contact_geometries']
+    assert result['head_contact_substeps']==1
+
+
+def test_legacy_hip_cannot_be_explicitly_selected_as_anatomical_head():
+    model=mujoco.MjModel.from_xml_string(ANATOMY_XML)
+    with pytest.raises(ValueError,match='right hip'):
+        HeadAudit(model,body_names=('neck','bearing_roll'))

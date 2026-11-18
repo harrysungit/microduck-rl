@@ -15,6 +15,7 @@
 
 旧的 `harrysungit/microduck_rl`（下划线）fork 已删除。历史 checkout 的 origin 可能仍指向它；
 识别官方来源请看 upstream 和固定 commit，不能把过期 remote 当成当前依赖缺失。
+2026-11-19 已把现有开发环境依赖 checkout 的 origin 修正为官方地址，固定 commit 未升级。
 
 ## 怎么知道官方更新了
 

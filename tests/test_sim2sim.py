@@ -217,6 +217,22 @@ def test_posture_segments_give_settle_times_and_transitions():
     assert math.isclose(segs[1]["tilt_end"], 2.0)
 
 
+def test_foot_only_low_crouch_or_missing_support_is_not_a_verified_sit():
+    traces = posture_traces(height_profile)
+    missing = sim2sim.posture_segments(traces, POSTURES)
+    assert missing[1]["ok"] and missing[1]["legal_sit_support_ok"] is None
+    assert not missing[1]["support_verified_ok"]
+    traces["legal_sit_support"] = [0.] * len(traces["t"])
+    foot_only = sim2sim.posture_segments(traces, POSTURES)
+    assert foot_only[1]["ok"] and not foot_only[1]["legal_sit_support_ok"]
+    assert not foot_only[1]["support_verified_ok"]
+    traces["legal_sit_support"] = [1.] * len(traces["t"])
+    assert all(s["support_verified_ok"] for s in sim2sim.posture_segments(traces, POSTURES))
+    # A loss of loaded support during the final second invalidates sitting.
+    traces["legal_sit_support"][220] = 0.
+    assert not sim2sim.posture_segments(traces, POSTURES)[1]["support_verified_ok"]
+
+
 def test_a_posture_lost_before_the_end_of_the_segment_is_not_reached():
     def height(t):  # sits at 3.5 s, stands up again at 4.5 s while the command is still sit
         return 0.118 if t <= 2.0 or t > 4.5 else (0.118 - 0.058 * (t - 2.0) / 1.5 if t <= 3.5 else 0.060)

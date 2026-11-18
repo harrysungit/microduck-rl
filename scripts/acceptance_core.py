@@ -35,9 +35,9 @@ DEFAULT_CRITERIA = {
     # Mandatory full-physics-step head/neck evidence. The legacy GPU recorder does not provide it:
     # missing means UNVERIFIED, never infer zero contacts from final height/tilt.
     "posture": {"clean": {"sit_down_min": 0.8, "stand_up_min": 0.9, "tipped_max": 0.02,
-                          "head_contact_max": 0.0, "head_audit_coverage_min": 1.0},
+                          "head_contact_max": 0.0, "head_audit_coverage_min": 1.0, "legal_sit_support_min": 1.0},
                 "trained": {"sit_down_min": 0.6, "stand_up_min": 0.6, "tipped_max": 0.10,
-                            "head_contact_max": 0.0, "head_audit_coverage_min": 1.0}},
+                            "head_contact_max": 0.0, "head_audit_coverage_min": 1.0, "legal_sit_support_min": 1.0}},
     # reset: share of worlds a termination ends during the schedule; forward / turn: achieved over commanded velocity
     # in the forward 0.3 m/s and the turn 0.8 rad/s segments (the weaker of the two directions). Tracking is gated in the
     # clean world only: the trained world's topple pushes, head commands and noise drag the mean velocities down, even
@@ -95,6 +95,7 @@ def effective_criteria(contract: str, override: dict | None = None) -> dict:
         for variant in VARIANTS:
             crit[variant]["head_contact_max"] = 0.0
             crit[variant]["head_audit_coverage_min"] = 1.0
+            crit[variant]["legal_sit_support_min"] = 1.0
     return crit
 
 

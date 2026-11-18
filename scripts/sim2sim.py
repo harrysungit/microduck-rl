@@ -485,11 +485,15 @@ def posture_segments(traces: dict, schedule: list) -> list[dict]:
     of the segment, and how long into the segment it last arrived there."""
     t, z, tilt = (np.asarray(traces[k]) for k in ("t", "z", "tilt"))
     speed = np.hypot(np.asarray(traces["vx"]), np.asarray(traces["vy"]))
+    support = traces.get("legal_sit_support")
+    support = np.asarray(support, dtype=float) if support is not None else None
+    support_known = support is not None and support.shape == t.shape and np.isfinite(support).all()
     out, start, previous = [], 0.0, None
     for duration, cmd, label in schedule:
         sit = cmd[0] > 0.5
         seg = (t > start + 1e-9) & (t <= start + duration + 1e-9)
         row = {"segment": label, "command": list(cmd), "samples": int(seg.sum()), "settled_s": None, "ok": False,
+               "legal_sit_support_ok": None if sit else True, "support_verified_ok": False,
                "transition": "hold" if previous is None or previous == sit else ("sit-down" if sit else "stand-up")}
         if seg.any():
             good = ((z <= SIT_Z_MAX) if sit else (z >= STAND_Z_MIN)) & (tilt < UPRIGHT_DEG)
@@ -512,6 +516,11 @@ def posture_segments(traces: dict, schedule: list) -> list[dict]:
             if tail.any():
                 row.update(z_end=float(z[tail].mean()), tilt_end=float(tilt[tail].mean()),
                            drift_end=float(speed[tail].mean()))
+                if sit and support_known:
+                    # Each control tick is true only when every underlying physics substep was loaded.
+                    row["legal_sit_support_ok"] = bool(complete and (support[tail] == 1.).all()
+                                                       and good[tail].all())
+            row["support_verified_ok"] = bool(row["ok"] and row["legal_sit_support_ok"] is True)
         out.append(row)
         start += duration
         previous = sit
@@ -597,6 +606,8 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
     if ball:
         keys += ["ball_fwd", "ball_x", "ball_y"]  # the ball's speed along +x, the kick direction, and its position
     traces = {k: [] for k in keys}
+    if audit:
+        traces["legal_sit_support"] = []
     last_action, filtered = np.zeros(n), None
     alpha = None  # the robot's target low-pass: head joints (5-8) and legs
     if level.lowpass is not None and transform is None:
@@ -622,11 +633,13 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
             data.qvel[0:2] += rng.uniform(-p["push_mps"], p["push_mps"], 2)
             next_push += rng.uniform(3.0, 6.0)
         ground_bodies, self_pairs = set(), set()
+        tick_legal_sit_support = True
         for _ in range(substeps):
             torque = servos.step(model, data)
             mujoco.mj_step(model, data)
             if audit:
                 audit.sample(data, float(data.time - model.opt.timestep), model.opt.timestep)
+                tick_legal_sit_support &= audit.last_legal_sit_support
             steps += 1
             saturated_steps += bool(np.any(np.abs(torque) >= 0.99 * servos.force_limit))
             peak_torque = np.maximum(peak_torque, np.abs(torque))
@@ -660,6 +673,8 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
             row += [data.qvel[ball[1]], data.qpos[ball[0]], data.qpos[ball[0] + 1]]
         for key, value in zip(keys, row):
             traces[key].append(float(value))
+        if audit:
+            traces["legal_sit_support"].append(float(tick_legal_sit_support))
         rate.append(float(np.sqrt(np.mean((action - last_action) ** 2))))
         last_action = action
         if renderer:
@@ -704,7 +719,8 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
         result["safety"] = audit.result()
         result["safety"]["expected_physics_substeps"] = ticks * substeps
         result["safety"]["coverage"] = audit.steps / (ticks * substeps)
-        result["automatic_pass"] = bool(all(s["ok"] for s in segments) and not result["safety"]["head_contact"]
+        result["legal_sit_support_pass"] = bool(segments and all(s["support_verified_ok"] for s in segments))
+        result["automatic_pass"] = bool(result["legal_sit_support_pass"] and not result["safety"]["head_contact"]
                                         and result["safety"]["min_clearance_m"] >= 0.0 and fell_at is None
                                         and audit.steps == ticks * substeps)
         result["human_review"] = "pending"

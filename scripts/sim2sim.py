@@ -110,6 +110,11 @@ class Level:
     task: str = "walk"  # walk | sitstand | kick
     ball_noise: float = 0.0  # kick: the ball's placement noise, m (uniform, both axes); randomized levels use the training's
     kick_foot: str = "right"
+    cold_start: str = "measured"  # measured hold | first processed target | explicit prior HOME
+
+    def __post_init__(self):
+        if self.cold_start not in ("measured", "first", "home"):
+            raise ValueError(f"Unknown cold-start history: {self.cold_start}")
 
 
 _TRAINING_SOLVER = dict(timestep=0.005, iterations=10, ls_iterations=20)
@@ -336,11 +341,16 @@ class CommandQueue:
     def __init__(self, latency_s: tuple[float, float], rng: np.random.Generator):
         self.latency_s, self.rng = latency_s, rng
         self.items: deque = deque()
+        self.fill_first = False
 
-    def reset(self, targets: np.ndarray) -> None:
+    def reset(self, targets: np.ndarray, *, fill_first: bool = False) -> None:
         self.items = deque([(-math.inf, targets.copy())])
+        self.fill_first = fill_first
 
     def send(self, t: float, targets: np.ndarray) -> None:
+        if self.fill_first:
+            self.items[0] = (-math.inf, targets.copy())
+            self.fill_first = False
         self.items.append((t, targets.copy()))
 
     def at(self, t: float) -> np.ndarray:
@@ -382,10 +392,12 @@ class Servos:
         """Encoder reading: motor angle, plus the gear play on backlash models, plus the encoder's bias."""
         return data.qpos[self.qadr] + self.bl_mask * data.qpos[self.bl_qadr] + self.bias
 
-    def reset(self, data: mujoco.MjData, targets: np.ndarray) -> None:
+    def reset(self, data: mujoco.MjData, targets: np.ndarray | None = None, *, fill_first: bool = False) -> None:
         self.act.q_target_smooth = self.measured(data).copy()  # the Feetech goal starts where the servo is
         self.prev_torque[:] = 0.0
-        self.queue.reset(targets)
+        # Direct seated spawns have no prior HOME motion. Hold the measured
+        # position until a real target arrives, unless explicitly overridden.
+        self.queue.reset(self.measured(data) if targets is None else targets, fill_first=fill_first)
 
     def step(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray:
         q, dq = self.measured(data), data.qvel[self.dadr]  # dq: rotor side, for back-EMF and friction
@@ -580,7 +592,8 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
     mujoco.mj_forward(model, data)
     if audit:
         audit.sample(data, 0., 0.)
-    servos.reset(data, policy.home.copy())
+    servos.reset(data, policy.home.copy() if level.cold_start == "home" else None,
+                 fill_first=level.cold_start == "first")
     observer.reset(data)
 
     floor = model.geom("floor").id
@@ -701,6 +714,7 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
     moving = [s for s in segments if any(s["command"]) and "achieved" in s]
     result = {
         "level": level.key, "seed": seed, "fell_at_s": fell_at, "up_at_s": up_at,
+        "cold_start": level.cold_start,
         "final_tilt_deg": traces["tilt"][-1], "final_z": traces["z"][-1],
         "vin": p["vin"], "drop_gain": p["drop_gain"], "foot_friction": p["foot_friction"],
         "segments": segments,
@@ -952,12 +966,16 @@ def write_report_sitstand(out: Path, levels: dict, provenance: dict) -> None:
     def schedule_text(schedule: list) -> str:
         return "; ".join(f"{label} {d:g} s" for d, _, label in schedule) + f" ({sum(d for d, _, _ in schedule):g} s)"
 
+    cold_starts = sorted({row["level"].get("cold_start", "legacy-unrecorded") for row in levels.values()})
     lines = ["# HD-1910 sitstand: sim2sim in MuJoCo C, away from the training world", "",
              "The exported ONNX that goes to the robot, run in plain MuJoCo on the CPU by `scripts/sim2sim.py --task "
              "sitstand`, which imports nothing from mjlab or the training code. Scene export, servo model and "
              "observations are the walk check's; the command is the posture flag the robot's runtime writes into the "
              "first command slot (0 = stand, 1 = sit).", "",
              f"- Policy: `{provenance['onnx']}` (sha256 `{provenance['onnx_sha256'][:16]}…`)",
+             f"- Cold target history: {', '.join(cold_starts)}. Measured hold is a continuous-position approximation, "
+             "not a bitwise native signed-encoder/turn model; first-target fill matches only that GPU buffer boundary. "
+             "HOME history is an explicit robustness condition. Archived results are not rescored.",
              f"- Servo model: `1910_m6.json` (sha256 `{provenance['servo_sha256'][:16]}…`), firmware P {KP_FW:g}, "
              f"supply {VIN_RANGE[0]}–{VIN_RANGE[1]} V, floor {VIN_MIN} V",
              f"- Command schedule from standing: {schedule_text(SIT_FROM_STAND)}; from the seated start: "
@@ -1080,17 +1098,24 @@ def main() -> None:
     ap.add_argument("--out-dir", type=Path, required=True)
     ap.add_argument("--title", help="the skill's name in the report's title; default: the task")
     ap.add_argument("--foot", choices=("right", "left"), default="right", help="the kick task's kicking foot")
+    ap.add_argument("--cold-start", choices=("measured", "first", "home"), default="measured",
+                    help="initial delayed target: measured hold (default), first processed target fill, or legacy HOME")
     ap.add_argument("--report-only", action="store_true", help="rewrite the report from metrics.json")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     if args.reference and args.task != "walk":
         ap.error("--reference is for the walk task")
-    levels = {lv.key: replace(lv, kick_foot=args.foot) if lv.task == "kick" else lv for lv in LEVEL_SETS[args.task]}
+    levels = {lv.key: replace(lv, cold_start=args.cold_start,
+                              kick_foot=args.foot if lv.task == "kick" else lv.kick_foot)
+              for lv in LEVEL_SETS[args.task]}
     provenance = {"onnx": args.onnx.name, "onnx_sha256": hashlib.sha256(args.onnx.read_bytes()).hexdigest(),
                   "servo_sha256": hashlib.sha256(args.servo_params.read_bytes()).hexdigest(), "task": args.task,
-                  "title": args.title or args.task}
+                  "title": args.title or args.task, "cold_start": args.cold_start}
     if args.report_only:
-        write_report(args.out_dir, json.loads((args.out_dir / "metrics.json").read_text()), provenance)
+        archived = json.loads((args.out_dir / "metrics.json").read_text())
+        # New defaults cannot relabel an archived numeric run as measured hold.
+        provenance = archived.get("provenance", {k: v for k, v in provenance.items() if k != "cold_start"})
+        write_report(args.out_dir, archived, provenance)
         return
 
     results = {}

@@ -1,6 +1,7 @@
 """sim2sim.py on a small stand-in robot (CPU): independence, servo loop, observations."""
 
 import math
+import json
 import subprocess
 import sys
 from dataclasses import replace
@@ -109,6 +110,79 @@ def test_feetech_goal_starts_at_the_measured_position(assets):
     mujoco.mj_forward(model, data)
     servos.reset(data, np.zeros(2))
     np.testing.assert_allclose(servos.act.q_target_smooth, [0.3, -0.2])
+
+
+def test_cold_hold_keeps_displaced_encoder_position_until_first_target(assets):
+    model, data, servos, _ = make(assets)
+    data.qpos[servos.qadr] = [0.3, -0.2]
+    servos.bias = np.array([0.01, -0.02])
+    mujoco.mj_forward(model, data)
+    measured = servos.measured(data).copy()
+    servos.reset(data)
+    servos.queue.send(0.0, np.array([0.4, 0.5]))
+    np.testing.assert_allclose(servos.queue.at(0.0), measured)
+    np.testing.assert_allclose(servos.queue.at(0.019), measured)
+    np.testing.assert_allclose(servos.act.q_target_smooth, measured)
+    np.testing.assert_allclose(servos.queue.at(0.020), [0.4, 0.5])
+
+
+def test_explicit_home_history_remains_a_separate_cold_start(assets):
+    model, data, servos, _ = make(assets)
+    data.qpos[servos.qadr] = [0.3, -0.2]
+    mujoco.mj_forward(model, data)
+    servos.reset(data, np.zeros(2))
+    servos.queue.send(0.0, np.array([0.4, 0.5]))
+    np.testing.assert_allclose(servos.queue.at(0.0), np.zeros(2))
+    np.testing.assert_allclose(servos.act.q_target_smooth, [0.3, -0.2])
+
+
+def test_first_target_fill_preserves_subsequent_latency_and_resets():
+    queue = CommandQueue((0.02, 0.02), np.random.default_rng(7))
+    queue.reset(np.array([0.3]), fill_first=True)
+    queue.send(0.0, np.array([0.7]))
+    assert queue.at(0.0)[0] == 0.7
+    queue.send(0.02, np.array([0.9]))
+    assert queue.at(0.039)[0] == 0.7
+    assert queue.at(0.040)[0] == 0.9
+    queue.reset(np.array([-0.3]))
+    queue.send(0.0, np.array([-0.7]))
+    assert queue.at(0.0)[0] == -0.3
+
+
+def test_startup_history_does_not_change_latency_random_draws():
+    rng_a, rng_b = np.random.default_rng(7), np.random.default_rng(7)
+    a, b = CommandQueue((0.015, 0.03), rng_a), CommandQueue((0.015, 0.03), rng_b)
+    a.reset(np.array([0.0]))
+    b.reset(np.array([0.3]), fill_first=True)
+    for t in np.arange(0, 0.1, 0.002):
+        a.send(t, np.array([t]))
+        b.send(t, np.array([t]))
+        a.at(t)
+        b.at(t)
+    assert rng_a.bit_generator.state == rng_b.bit_generator.state
+
+
+def test_level_requires_a_valid_startup_contract():
+    assert Level("T", "test").cold_start == "measured"
+    with pytest.raises(ValueError, match="cold-start"):
+        Level("T", "test", cold_start="unknown")
+
+
+@pytest.mark.parametrize("archived_mode", [None, "home"])
+def test_report_only_does_not_relabel_archived_startup(tmp_path, monkeypatch, archived_mode):
+    policy = tmp_path / "policy.onnx"
+    policy.write_bytes(b"not loaded in report-only mode")
+    archived = {} if archived_mode is None else {"provenance": {"cold_start": archived_mode, "onnx_sha256": "historical"}}
+    (tmp_path / "metrics.json").write_text(json.dumps(archived))
+    seen = {}
+    monkeypatch.setattr(sim2sim, "write_report", lambda out, results, provenance: seen.update(provenance))
+    monkeypatch.setattr(sys, "argv", ["sim2sim", "--onnx", str(policy), "--assets", str(tmp_path),
+                                     "--out-dir", str(tmp_path), "--report-only", "--cold-start", "measured"])
+    sim2sim.main()
+    if archived_mode is None:
+        assert "cold_start" not in seen
+    else:
+        assert seen["cold_start"] == archived_mode and seen["onnx_sha256"] == "historical"
 
 
 def test_friction_load_uses_dof_indices_past_the_free_joint(assets):

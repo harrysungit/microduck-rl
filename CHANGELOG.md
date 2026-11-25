@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Withdrawn: the sit-stand acceptance of 0.1.0. The gate scored end states
+  only; the policy's head hit the ground on the way down in simulation, and
+  it sat down too hard on a robot.
+- The other skills of 0.1.0 passed checks in simulation only. None of the
+  policies trained so far has passed a robot test or a review of full-motion
+  videos; none is a candidate for a robot.
+- `scripts/check_upstream.py`: what changed in Pollen's microduck_rl and its
+  released policies since the pin; it only reports.
+- Every training run writes `CODE_IDENTITY.json`: commits, local changes,
+  untracked sources, the launcher and package versions.
+- `env/setup.sh` honours `MICRODUCK_RL_DEPS`, so one environment outside the
+  checkout can serve several worktrees.
+
 ## 0.1.0 (2026-11-06)
 
 First release.

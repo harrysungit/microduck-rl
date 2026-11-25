@@ -3,8 +3,9 @@
 `Mjlab-StandUp-Flat-MicroDuck-HD1910`: from lying on the back, front or side
 to standing.
 
-**Status:** accepted in simulation (training world and MuJoCo C sim2sim). Not
-run on a robot. Policy not published yet (sha256 `720da3f3…`).
+**Status:** simulation only. Passed the 0.1.0 gate in the training world and
+MuJoCo C sim2sim. Has not passed a robot test or a review of full-motion
+videos; not a candidate for a robot. Policy not published (sha256 `720da3f3…`).
 
 ## Recipe
 

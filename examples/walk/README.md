@@ -3,8 +3,10 @@
 `Mjlab-VelStand-Flat-MicroDuck-HD1910`: walking that follows a velocity
 command, and gets up when it falls, in one policy.
 
-**Status:** accepted in simulation (training world and MuJoCo C sim2sim), with
-one warning. Not run on a robot. Policy not published yet (sha256 `699e40e1…`).
+**Status:** simulation only. Passed the 0.1.0 gate in the training world and
+MuJoCo C sim2sim, with one warning. Has not passed a robot test or a review of
+full-motion videos; not a candidate for a robot. Policy not published (sha256
+`699e40e1…`).
 
 ## Recipe
 

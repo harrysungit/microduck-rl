@@ -4,9 +4,10 @@
 `Mjlab-GroundPick-Flat-Backlash-MicroDuck-HD1910`: bends down to bring the
 mouth to the floor and stands again, in 4 s cycles.
 
-**Status:** accepted in the training world under a draft contract. **No
-sim2sim yet.** Not run on a robot. Policies not published yet (sha256 flat
-`4a0942c9…`, with backlash `3047efc9…`).
+**Status:** simulation only. Passed the 0.1.0 gate under a draft contract in
+the training world; no sim2sim. Has not passed a robot test or a review of
+full-motion videos; not a candidate for a robot. Policies not published
+(sha256 flat `4a0942c9…`, with backlash `3047efc9…`).
 
 ## Recipe
 

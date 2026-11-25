@@ -18,17 +18,17 @@
 - **策略算数之前的检查**：验收门在训练前声明一个技能"能用"指什么，训练后给出结论；另有独立的 sim2sim，
   在普通 MuJoCo 里运行，不经过训练用的世界。
 
-本仓库的策略还没有在实机上跑过。训练好的策略暂未发布。
+下表技能只在仿真里通过了检查。本仓库训练的策略都没有通过实机测试或完整动作视频核验，都不是上机候选；坐站策略 2026-11-18 上机试过，坐下过猛。训练好的策略不发布。
 
 ## 技能
 
-在仿真里两项检查都通过的五个技能。每个示例都有训练配方、数据和已知局限。
+0.1.0 的仿真结果：训练世界里的验收门和普通 MuJoCo 里的 sim2sim。两者都只看最终状态，漏掉了过程：坐站策略坐下时头部触地。每个示例都有训练配方、数据和已知局限。
 
 | 技能 | 任务 | 验收（训练世界） | Sim2sim（MuJoCo C） |
 |---|---|---|---|
 | [走路并起身](examples/walk/README.md) | `Mjlab-VelStand-Flat-MicroDuck-HD1910` | ACCEPTED，1 条警告 | 通过 |
 | [起身](examples/standup/README.md) | `Mjlab-StandUp-Flat-MicroDuck-HD1910` | ACCEPTED | 通过，46/48 |
-| [坐下与站起](examples/sitstand/README.md) | `Mjlab-SitStand-Flat-MicroDuck-HD1910` | ACCEPTED | 通过 |
+| [坐下与站起](examples/sitstand/README.md) | `Mjlab-SitStand-Flat-MicroDuck-HD1910` | ACCEPTED，已撤回：漏检头部触地 | 通过，只看最终状态 |
 | [踢球](examples/kick/README.md) | `Mjlab-BallKick[Left]-Flat[-Backlash]-MicroDuck-HD1910` | ACCEPTED（草案契约） | 通过 |
 | [低头捡物](examples/ground_pick/README.md) | `Mjlab-GroundPick-Flat[-Backlash]-MicroDuck-HD1910` | ACCEPTED（草案契约） | 还没跑 |
 
@@ -105,7 +105,7 @@ python scripts/sim2sim.py --onnx policy.onnx --assets logs/sim2sim/assets --out-
 ```
 
 结论是 ACCEPTED、FAILED 或 UNVERIFIED。UNVERIFIED 表示没有失败项，但有东西没检查到，不算通过。
-契约见 [scripts/acceptance_core.py](scripts/acceptance_core.py)。
+契约见 [scripts/acceptance_core.py](scripts/acceptance_core.py)。验收结论不是最终核验：策略要通过完整动作视频的人工核验才算数。
 
 部署时用 Pollen 的 `scripts/export.py` 导出，它把观测归一化写进 ONNX。接口以及在 HD-1910 机器人上的不同之处见
 [docs/DEPLOY.md](docs/DEPLOY.md)。

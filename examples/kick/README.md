@@ -4,9 +4,11 @@ Right foot: `Mjlab-BallKick-Flat-MicroDuck-HD1910`. Left foot:
 `Mjlab-BallKickLeft-Flat-MicroDuck-HD1910`, then fine-tuned with backlash on
 `Mjlab-BallKickLeft-Flat-Backlash-MicroDuck-HD1910`.
 
-**Status:** accepted in simulation under a draft contract (training world and
-MuJoCo C sim2sim). Not run on a robot. Policies not published yet (sha256
-right `e7ca843c…`, left flat `62f972b8…`, left with backlash `54d2482b…`).
+**Status:** simulation only. Passed the 0.1.0 gate under a draft contract in
+the training world and MuJoCo C sim2sim. Has not passed a robot test or a
+review of full-motion videos; not a candidate for a robot. Policies not
+published (sha256 right `e7ca843c…`, left flat `62f972b8…`, left with backlash
+`54d2482b…`).
 
 ## Recipe
 

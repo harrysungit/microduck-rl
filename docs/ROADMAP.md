@@ -1,7 +1,9 @@
 # Roadmap
 
-Each item says what "done" means. Simulation work is done for five skills;
-the next step needs a robot.
+Each item says what "done" means. Four skills pass their checks in
+simulation, and the sit-stand acceptance is withdrawn (see
+[CHANGELOG.md](../CHANGELOG.md)); a skill counts only after a robot test and a
+review of its full-motion videos.
 
 ## Hardware
 
@@ -27,10 +29,10 @@ the next step needs a robot.
 - [ ] **Confirm the draft contracts.** The kick (ball speed at least 0.5 m/s)
   and pick (mouth tip within 8 cm of the floor, then standing) thresholds are
   drafts. Done: thresholds set from hardware runs.
-- [ ] **SitStand margin.** Clean sit-down is 84% against a threshold of 80%,
-  and while sitting the ankle and hip parts touch in the all-collision model
-  for about 37% of the steps. Done: a margin of 10 points, and the contact
-  checked on the real robot.
+- [ ] **SitStand.** Done: a policy that sits down and stands up smoothly in
+  full-motion videos, judged as Pollen's sit-stand task is: brief head
+  support during a transition is allowed, the head holds its commanded pose
+  while seated or standing, and a hard landing fails.
 - [ ] **Walk recovery.** After the trained world's topple pushes, 12.9% of
   worlds stay down for 8 s (warning above 10%, failure above 25%). Done: under
   10%.

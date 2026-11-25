@@ -25,19 +25,23 @@ What it adds:
   "works" means for a skill before training and gives a verdict after it, and
   an independent sim2sim in plain MuJoCo, away from the training world.
 
-No policy from this repository has run on a robot yet. Trained policies are
-not published yet.
+The skills below passed checks in simulation only. None of the policies
+trained here has passed a robot test or a review of full-motion videos, and
+none is a candidate for a robot; the sit-stand policy, tried on a robot on
+2026-11-18, sat down too hard. Trained policies are not published.
 
 ## Skills
 
-The five skills that pass both checks in simulation. Each example has the
-recipe, the numbers and the known limits.
+Simulation results of 0.1.0: the acceptance gate in the training world and
+sim2sim in plain MuJoCo. Both scored end states, so they missed what happens
+on the way: the sit-stand policy's head hit the ground while sitting down.
+Each example has the recipe, the numbers and the known limits.
 
 | Skill | Task | Acceptance (training world) | Sim2sim (MuJoCo C) |
 |---|---|---|---|
 | [Walk and get up](examples/walk/README.md) | `Mjlab-VelStand-Flat-MicroDuck-HD1910` | ACCEPTED, 1 warning | pass |
 | [Stand up](examples/standup/README.md) | `Mjlab-StandUp-Flat-MicroDuck-HD1910` | ACCEPTED | pass, 46/48 |
-| [Sit and stand](examples/sitstand/README.md) | `Mjlab-SitStand-Flat-MicroDuck-HD1910` | ACCEPTED | pass |
+| [Sit and stand](examples/sitstand/README.md) | `Mjlab-SitStand-Flat-MicroDuck-HD1910` | ACCEPTED, withdrawn: missed head contact | pass, end states only |
 | [Kick](examples/kick/README.md) | `Mjlab-BallKick[Left]-Flat[-Backlash]-MicroDuck-HD1910` | ACCEPTED (draft contract) | pass |
 | [Pick from the ground](examples/ground_pick/README.md) | `Mjlab-GroundPick-Flat[-Backlash]-MicroDuck-HD1910` | ACCEPTED (draft contract) | not run yet |
 
@@ -130,6 +134,8 @@ python scripts/sim2sim.py --onnx policy.onnx --assets logs/sim2sim/assets --out-
 The verdict is ACCEPTED, FAILED or UNVERIFIED. UNVERIFIED means nothing failed
 but something could not be checked; it is not a pass. See
 [scripts/acceptance_core.py](scripts/acceptance_core.py) for the contracts.
+A verdict is not a final review: a policy counts only after a review of its
+full-motion videos.
 
 To deploy, export with Pollen's `scripts/export.py`, which bakes the
 observation normalizer into the ONNX. [docs/DEPLOY.md](docs/DEPLOY.md) has the

@@ -2,8 +2,11 @@
 
 `Mjlab-SitStand-Flat-MicroDuck-HD1910`: sits down and stands up on command.
 
-**Status:** accepted in simulation (training world and MuJoCo C sim2sim). Not
-run on a robot. Policy not published yet (sha256 `6f6c06e8…`).
+**Status:** withdrawn. Passed the 0.1.0 gate in the training world and MuJoCo
+C sim2sim, which scored end states only: on the way down its head shell hit
+the ground in simulation, and on a robot (2026-11-18) it sat down too hard.
+Not a candidate for a robot. Policy not published (sha256 `6f6c06e8…`). The
+rest of this page is the record of 0.1.0.
 
 ## Recipe
 

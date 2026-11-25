@@ -60,6 +60,9 @@ source env/activate.sh
 python env/check_env.py    # 设备、一个 Warp kernel、ROCm 补丁、任务
 ```
 
+要把环境放在仓库外（多个 worktree 共用一套环境），在运行 `env/setup.sh` 和 `env/activate.sh` 之前
+都先 export `MICRODUCK_RL_VENV`、`MICRODUCK_RL_DEPS`、`MICRODUCK_RL_CACHE`。
+
 `env/pins.toml` 固定所有来源：Pollen 的 microduck_rl、AMD 的 Warp 分支、gfx1151 的 torch 夜间版，以及
 microduck_rl `uv.lock` 里的 Python 包。`env/activate.sh` 把所有缓存放在 `.cache/` 下，并打开 HIP graph 捕获和
 PyTorch TunableOp。

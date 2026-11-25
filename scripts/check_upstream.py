@@ -4,6 +4,7 @@ import argparse
 import hashlib
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -98,7 +99,7 @@ def snapshot_source(root, cache, repository):
 def check(root=ROOT, out_dir=None, cache=None, reviewed_sha=None, note=None, reviewed_policies=None):
     root = Path(root)
     out_dir = Path(out_dir or root / "logs/upstream-review")
-    cache = Path(cache or root / ".cache/upstream-review.git").resolve()
+    cache = Path(cache or Path(os.environ.get("MICRODUCK_RL_CACHE") or root / ".cache") / "upstream-review.git").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     report = {"checked_at_utc": datetime.now(timezone.utc).isoformat(), "branch": "develop",
               "status": "UNKNOWN", "training_allowed": False, "installed_dependency_changed": False}

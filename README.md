@@ -73,6 +73,10 @@ source env/activate.sh
 python env/check_env.py    # devices, a Warp kernel, the ROCm patch, the tasks
 ```
 
+To keep the environment outside the checkout (one environment for several worktrees),
+export `MICRODUCK_RL_VENV`, `MICRODUCK_RL_DEPS` and `MICRODUCK_RL_CACHE` before both
+`env/setup.sh` and `env/activate.sh`.
+
 `env/pins.toml` pins every source: Pollen's microduck_rl, AMD's Warp branch,
 the torch nightly for gfx1151 and the Python packages of microduck_rl's
 `uv.lock`. `env/activate.sh` keeps all caches under `.cache/` and turns on HIP

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Build the ROCm (gfx1151) training environment from env/pins.toml.
 #
-# Idempotent: re-running skips what is already in place. Writes only inside the
-# repository (.venv/, .cache/, .deps/); no sudo, no system packages. Needs the
-# host ROCm at /opt/rocm for the Warp build.
+# Idempotent: re-running skips what is already in place. Writes inside the
+# repository (.venv/, .cache/, .deps/), or wherever MICRODUCK_RL_VENV,
+# MICRODUCK_RL_CACHE and MICRODUCK_RL_DEPS point; no sudo, no system packages.
+# Needs the host ROCm at /opt/rocm for the Warp build.
 #
 #   bash env/setup.sh                 # full setup
 #   bash env/setup.sh --rebuild-warp  # force a Warp rebuild
@@ -11,7 +12,7 @@ set -euo pipefail
 
 ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$ENV_DIR")"
-DEPS="$ROOT/.deps"
+DEPS="${MICRODUCK_RL_DEPS:-$ROOT/.deps}"
 REBUILD_WARP=0
 [ "${1:-}" = "--rebuild-warp" ] && REBUILD_WARP=1
 

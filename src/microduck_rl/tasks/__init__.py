@@ -21,6 +21,11 @@ from microduck_rl.patches.fixed_std import apply as _apply_fixed_std
 
 _apply_fixed_std()
 
+# Record the code a training run ran with: CODE_IDENTITY.json in its log directory (see identity.py).
+from microduck_rl.patches.identity import apply as _apply_identity
+
+_apply_identity()
+
 from mjlab.tasks.registry import register_mjlab_task
 
 from mjlab_microduck.tasks import (

@@ -86,9 +86,15 @@ this package into a working microduck_rl environment (`pip install --no-deps
 
 ```bash
 source env/activate.sh
+python scripts/check_upstream.py    # what changed upstream since the pin; review it first
 train Mjlab-Velocity-Flat-MicroDuck-HD1910 --env.scene.num-envs 4096 --env.sim.njmax 160 \
     --agent.max-iterations 10000 --agent.logger tensorboard
 ```
+
+`scripts/check_upstream.py` only reports. It compares Pollen's microduck_rl
+develop branch and released policies with the pin, writes
+`logs/upstream-review/upstream.md`, and never updates the installed
+dependency or downloads weights. `train` does not run it by itself.
 
 `--env.sim.njmax` matters: mjlab's default of 1500 constraint rows per world
 is about 30 times what the walk uses, and a lower budget is much faster. The

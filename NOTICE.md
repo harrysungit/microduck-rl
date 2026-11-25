@@ -16,3 +16,8 @@ on the following work.
 
 Microduck is a robot by Pollen Robotics. This project is not affiliated with
 or endorsed by Pollen Robotics.
+
+`docs/upstream/AGENTS.develop.md` is an unmodified reference copy of Pollen
+Robotics' AGENTS.md at `0daab160d3fb1c2cbaba16a4a19052f36709dd9e` (Apache-2.0),
+the baseline of `scripts/check_upstream.py`. The source URL and SHA256 are
+recorded in `docs/upstream/source.json`.

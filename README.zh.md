@@ -71,9 +71,12 @@ PyTorch TunableOp。
 
 ```bash
 source env/activate.sh
+python scripts/check_upstream.py    # 固定版本之后官方有什么变化；先看再训练
 train Mjlab-Velocity-Flat-MicroDuck-HD1910 --env.scene.num-envs 4096 --env.sim.njmax 160 \
     --agent.max-iterations 10000 --agent.logger tensorboard
 ```
+
+`scripts/check_upstream.py` 只报告：把 Pollen microduck_rl 的 develop 分支和已发布的策略与固定版本比较，写出 `logs/upstream-review/upstream.md`，不更新已安装的依赖，也不下载权重。`train` 不会自己运行它。
 
 `--env.sim.njmax` 很重要：mjlab 默认每个 world 1500 个约束行，约是走路实际用量的 30 倍，降低预算会快很多。
 预算有保护：某个 world 要超出时，训练以 `ConstraintBudgetExceeded` 停下，而不是悄悄丢掉约束行。

@@ -10,7 +10,9 @@ the observations are rebuilt the way the robot runs them:
   milliseconds, the Feetech goal seeded from the measured position after a
   reset, and BAM's friction written to dof_frictionloss every step;
 - observations from the IMU sensors and the joint encoders; actions
-  HOME + scale * a at 50 Hz.
+  HOME + scale * a at 50 Hz, or on the robotd levels the targets as robotd
+  sends them (voltage scale and low-pass, microduck_rl.actions.robotd_chain:
+  plain arithmetic shared with the training task that uses it).
 
 A ladder of levels changes one thing at a time, from the training settings
 to the robot's (LEVELS). Every level drives the same command schedule and is
@@ -51,12 +53,15 @@ import numpy as np
 import onnxruntime as ort
 from bam.model import load_model
 
+from microduck_rl.actions import robotd_chain  # plain arithmetic, no mjlab: the same chain the training task runs
+
 ROOT = Path(__file__).resolve().parents[1]
 SERVO_PARAMS = ROOT / "src/microduck_rl/actuators/hd1910/params/1910_m6.json"
 
 KP_FW = 5.0  # firmware P the robot writes to the servos
 VIN_RANGE = (7.4, 8.0)  # 2S battery
 VIN_MIN = 7.0
+ROBOTD_VIN_RANGE = (7.0, 8.4)  # the robotd-chain task's battery range (actuators/hd1910/robot.py)
 # BAM's friction-constraint stiffening (bam/mjlab.py), part of its friction model.
 STIFF_SOLREF_FRICTION = (-5.0e4, -2.0e2)
 STIFF_SOLIMP_FRICTION = (0.99, 0.9999, 0.001, 0.5, 2.0)
@@ -100,6 +105,8 @@ class Level:
     sensors: bool = True  # IMU sensors, quantized encoders, joint speeds from position differences
     joint_vel_lag: int = 0  # control steps; training feeds joint speeds one step late
     lowpass: tuple | None = None  # robot target low-pass (head, legs)
+    robotd: bool = False  # robotd's whole target chain: voltage scale and low-pass (microduck_rl.actions.robotd_chain)
+    vin_range: tuple | None = None  # battery drawn per episode from this range; also sets the servos' torque cap
     vin: float = 7.7
     drop_gain: float = 0.1
     latency_ms: tuple = (20.0, 20.0)
@@ -175,6 +182,19 @@ SITSTAND_LEVELS = [
     Level("push-0.3", "L3 + pushes up to 0.3 m/s (as in training)", push_mps=0.3, episodes=64, task="sitstand"),
     Level("push-0.6", "L3 + pushes up to 0.6 m/s", push_mps=0.6, episodes=64, task="sitstand"),
     Level("L3-seated", "L3, starting seated (SIT keyframe + noise)", start="seated", episodes=16, task="sitstand"),
+    # The targets as robotd sends them (Mjlab-SitStand-Flat-MicroDuck-HD1910-Robotd trains with the same chain),
+    # over a 2S battery from full to about 7.0 V: one episode per drawn voltage, per seated start, per randomization.
+    # L0-robotd keeps the training-equivalent physics: the stand-up turn depends on the collision set and the solver as
+    # much as on the chain, so a report shows both.
+    Level("L0-robotd", "L0 + robotd's target chain, battery 7.0-8.4 V", scene="groundcontact", collisions="groundcontact",
+          sensors=False, joint_vel_lag=1, robotd=True, vin_range=ROBOTD_VIN_RANGE, episodes=16, task="sitstand",
+          **_SIT_SOLVER),
+    Level("L3-robotd", "L3 + robotd's target chain, battery 7.0-8.4 V", robotd=True, vin_range=ROBOTD_VIN_RANGE,
+          episodes=16, task="sitstand"),
+    Level("L3-robotd-seated", "L3-robotd, starting seated", robotd=True, vin_range=ROBOTD_VIN_RANGE, start="seated",
+          episodes=16, task="sitstand"),
+    Level("L3-robotd-dr", "L3-dr + robotd's target chain, battery 7.0-8.4 V", robotd=True, vin_range=ROBOTD_VIN_RANGE,
+          randomize=True, episodes=64, latency_ms=(15.0, 30.0), task="sitstand"),
 ]
 # -- kick: the ball sits in front of the kicking foot, which the policy cannot see; it must go forward. Placement and ball
 # as the training's (BallKick env cfg: offset 0.09 m ahead and 0.042 m to the side, noise 1.5 cm; ball 15 g, radius 3.5 cm).
@@ -234,9 +254,11 @@ def sample_params(level: Level, rng: np.random.Generator, n: int) -> dict:
     p = dict(vin=level.vin, drop_gain=level.drop_gain, foot_friction=None, trunk_mass_scale=1.0,
              trunk_com=np.zeros(3), head_com={}, friction_scale=1.0, armature_scale=np.ones(n),
              encoder_bias=np.zeros(n), imu_rotation=None, noise=False, pushes=False)
+    if level.vin_range is not None and not level.randomize:
+        p["vin"] = rng.uniform(*level.vin_range)
     if level.randomize:
         axis = rng.normal(size=3)
-        p.update(vin=rng.uniform(*VIN_RANGE), drop_gain=rng.uniform(0.0, 0.2),
+        p.update(vin=rng.uniform(*(level.vin_range or VIN_RANGE)), drop_gain=rng.uniform(0.0, 0.2),
                  foot_friction=rng.uniform(0.7, 1.3), trunk_mass_scale=rng.uniform(0.95, 1.05),
                  trunk_com=rng.uniform(-0.015, 0.015, 3),
                  head_com={b: rng.uniform(-0.01, 0.01, 3) for b in HEAD_BODIES},
@@ -296,7 +318,7 @@ def build_model(level: Level, assets: Path, joint_names: list[str], servo_params
     # Servos: the XML position actuators become gain-1 torque motors, capped at the stall torque of the
     # highest supply voltage; MuJoCo's joint damping and friction give way to BAM's.
     bam = load_model(str(servo_params))
-    force_limit = max(VIN_RANGE) * bam.kt.value / bam.R.value
+    force_limit = max(level.vin_range or VIN_RANGE) * bam.kt.value / bam.R.value
     servo_joints = set(joint_names)
     for actuator in spec.actuators:
         target = actuator.target if isinstance(actuator.target, str) else actuator.target.name
@@ -485,6 +507,7 @@ def posture_segments(traces: dict, schedule: list) -> list[dict]:
     of the segment, and how long into the segment it last arrived there."""
     t, z, tilt = (np.asarray(traces[k]) for k in ("t", "z", "tilt"))
     speed = np.hypot(np.asarray(traces["vx"]), np.asarray(traces["vy"]))
+    yaw = np.degrees(np.unwrap(np.radians(traces["yaw"]))) if "yaw" in traces else None
     out, start, previous = [], 0.0, None
     for duration, cmd, label in schedule:
         sit = cmd[0] > 0.5
@@ -503,6 +526,9 @@ def posture_segments(traces: dict, schedule: list) -> list[dict]:
             tail = seg & (t > start + duration - 1.0)
             row.update(z_end=float(z[tail].mean()), tilt_end=float(tilt[tail].mean()),
                        drift_end=float(speed[tail].mean()))
+            if yaw is not None:  # net trunk turn over the segment, from the last sample before it
+                idx = np.flatnonzero(seg)
+                row["yaw_change_deg"] = float(yaw[idx[-1]] - yaw[max(idx[0] - 1, 0)])
         out.append(row)
         start += duration
         previous = sit
@@ -573,14 +599,17 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
                                    "-r", str(round(1 / CONTROL_DT)), "-i", "-", "-pix_fmt", "yuv420p", str(video)],
                                   stdin=subprocess.PIPE)
 
-    keys = ["t", "cmd_vx", "cmd_vy", "cmd_wz", "vx", "vy", "wz", "z", "tilt"] + [f"a{i}" for i in range(n)]
+    keys = ["t", "cmd_vx", "cmd_vy", "cmd_wz", "vx", "vy", "wz", "z", "tilt", "yaw"] + [f"a{i}" for i in range(n)]
     if ball:
         keys += ["ball_fwd", "ball_x", "ball_y"]  # the ball's speed along +x, the kick direction, and its position
     traces = {k: [] for k in keys}
     last_action, filtered = np.zeros(n), None
-    alpha = None  # the robot's target low-pass: head joints (5-8) and legs
-    if level.lowpass is not None:
-        alpha = np.array([level.lowpass[0] if 5 <= i < 9 else level.lowpass[1] for i in range(n)])
+    action_scale, alpha = policy.scale, None  # alpha: the robot's target low-pass, head joints and legs
+    if level.robotd:
+        action_scale = policy.scale * float(robotd_chain.voltage_scale(np.float64(p["vin"])))
+        alpha = np.array(robotd_chain.joint_alphas(policy.joint_names))
+    elif level.lowpass is not None:
+        alpha = np.array(robotd_chain.joint_alphas(policy.joint_names, *level.lowpass))
     next_push = rng.uniform(3.0, 6.0)
     ticks = round((RECOVERY_S if recovery else sum(d for d, _, _ in schedule)) / CONTROL_DT)
     upright_since = up_at = None
@@ -590,10 +619,13 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
     for k in range(ticks):
         command = np.zeros(3) if recovery else command_at(k * CONTROL_DT, schedule)
         action = policy(observer(data, last_action, command))
-        target = policy.home + policy.scale * action
-        if alpha is not None:
-            filtered = target if filtered is None else alpha * target + (1 - alpha) * filtered
-            target = filtered
+        if alpha is None:
+            target = policy.home + action_scale * action
+        else:
+            fresh = np.array([filtered is None])
+            target = robotd_chain.targets(action, policy.home, action_scale,
+                                          policy.home if filtered is None else filtered, fresh, alpha)
+            filtered = target
         servos.queue.send(data.time, target)
         if p["pushes"] and data.time >= next_push:
             data.qvel[0:2] += rng.uniform(-p["push_mps"], p["push_mps"], 2)
@@ -630,7 +662,8 @@ def run_episode(level: Level, seed: int, onnx: Path, assets: Path, servo_params:
         rot = data.xmat[observer.trunk].reshape(3, 3)
         v = rot.T @ data.qvel[0:3]
         tilt = math.degrees(math.acos(np.clip(rot[2, 2], -1.0, 1.0)))  # trunk z axis against the vertical
-        row = [(k + 1) * CONTROL_DT, *command, v[0], v[1], data.qvel[5], data.qpos[2], tilt, *action]
+        yaw = math.degrees(math.atan2(rot[1, 0], rot[0, 0]))  # heading of the trunk's x axis, wrapped
+        row = [(k + 1) * CONTROL_DT, *command, v[0], v[1], data.qvel[5], data.qpos[2], tilt, yaw, *action]
         if ball:
             row += [data.qvel[ball[1]], data.qpos[ball[0]], data.qpos[ball[0] + 1]]
         for key, value in zip(keys, row):
@@ -905,12 +938,16 @@ def write_report_sitstand(out: Path, levels: dict, provenance: dict) -> None:
 
     lines = ["# HD-1910 sitstand: sim2sim in MuJoCo C, away from the training world", "",
              "The exported ONNX that goes to the robot, run in plain MuJoCo on the CPU by `scripts/sim2sim.py --task "
-             "sitstand`, which imports nothing from mjlab or the training code. Scene export, servo model and "
+             "sitstand`, which imports nothing from mjlab; the robotd levels share only the target arithmetic "
+             "(`microduck_rl.actions.robotd_chain`) with the training task that uses it. Scene export, servo model and "
              "observations are the walk check's; the command is the posture flag the robot's runtime writes into the "
              "first command slot (0 = stand, 1 = sit).", "",
              f"- Policy: `{provenance['onnx']}` (sha256 `{provenance['onnx_sha256'][:16]}…`)",
              f"- Servo model: `1910_m6.json` (sha256 `{provenance['servo_sha256'][:16]}…`), firmware P {KP_FW:g}, "
-             f"supply {VIN_RANGE[0]}–{VIN_RANGE[1]} V, floor {VIN_MIN} V",
+             f"supply {VIN_RANGE[0]}–{VIN_RANGE[1]} V ({ROBOTD_VIN_RANGE[0]}–{ROBOTD_VIN_RANGE[1]} V on the robotd "
+             f"levels), floor {VIN_MIN} V",
+             "- robotd levels: the targets as robotd sends them, home + (7.4 V / battery) × action, low-passed "
+             "0.5 on the head and 0.7 on the legs against the previous target; the policy still sees its raw action.",
              f"- Command schedule from standing: {schedule_text(SIT_FROM_STAND)}; from the seated start: "
              f"{schedule_text(SIT_FROM_SEAT)}.",
              f"- A posture is reached when the trunk is at most {SIT_Z_MAX * 100:g} cm high for a sit, at least "
@@ -963,6 +1000,22 @@ def write_report_sitstand(out: Path, levels: dict, provenance: dict) -> None:
             lines.append(f"| {label} ({cmd[0]:g}) | {sum(c['ok'] for c in col)} of {len(col)} | "
                          f"{_fmt(_median([c['settled_s'] for c in col if c['settled_s'] is not None]), '.1f')} | "
                          f"{100 * float(np.median([c['z_end'] for c in col if 'z_end' in c])):.1f} |")
+    lines += ["", "## Heading per transition", "",
+              "Net trunk turn over each sit-down and stand-up segment, in degrees, counter-clockwise positive, pooled "
+              "over the level's episodes (the battery, and on the seated and randomized levels the start, differ by "
+              "episode).", "",
+              "| level | battery (V) | sit-down: n, min / median / max, mean abs | stand-up: n, min / median / max, "
+              "mean abs |", "|---|---|---|---|"]
+    for key, r in levels.items():
+        eps = [r["episode"]] if "episode" in r else r["episodes"]
+        vins = [e["vin"] for e in eps]
+        cells = []
+        for kind in ("sit-down", "stand-up"):
+            turns = [s["yaw_change_deg"] for e in eps for s in e["segments"]
+                     if s["transition"] == kind and "yaw_change_deg" in s]
+            cells.append(f"{len(turns)}, {min(turns):+.1f} / {float(np.median(turns)):+.1f} / {max(turns):+.1f}, "
+                         f"{float(np.mean(np.abs(turns))):.1f}" if turns else "-")
+        lines.append(f"| {key} | {min(vins):.2f}–{max(vins):.2f} | {cells[0]} | {cells[1]} |")
     for key, r in levels.items():
         if "episodes" in r:
             bad = [e for e in r["episodes"] if e["fell_at_s"] is not None or e["posture_ok"] < e["posture_total"]]

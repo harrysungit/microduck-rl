@@ -51,14 +51,14 @@ MICRODUCK_WALK_BACKLASH_HD1910_ROBOT_CFG = EntityCfg(
 )
 
 
-def _robot(spec_fn, backlash: bool) -> EntityCfg:
+def _robot(spec_fn, backlash: bool, **actuator_kwargs) -> EntityCfg:
     cfg = Hd1910BacklashActuatorCfg if backlash else Hd1910ActuatorCfg
     return EntityCfg(
         spec_fn=spec_fn,
         init_state=BACKLASH_HOME_FRAME if backlash else HOME_FRAME,
         collisions=(FULL_COLLISION,),
         articulation=EntityArticulationInfoCfg(
-            actuators=(cfg(**HD1910_ACTUATOR_KWARGS),),
+            actuators=(cfg(**{**HD1910_ACTUATOR_KWARGS, **actuator_kwargs}),),
             soft_joint_pos_limit_factor=0.9,
         ),
     )
@@ -83,6 +83,13 @@ def get_allcollisions_backlash_hd1910_spec():
 # Ground-contact model: StandUp, SitStand, GroundPick, BallKick, Roulade.
 MICRODUCK_GROUNDCONTACT_HD1910_ROBOT_CFG = _robot(get_groundcontact_hd1910_spec, backlash=False)
 MICRODUCK_GROUNDCONTACT_BACKLASH_HD1910_ROBOT_CFG = _robot(get_groundcontact_backlash_hd1910_spec, backlash=True)
+# The ground-contact robot for tasks with robotd's deployment chain (actions/robotd.py), whose
+# action scale follows the battery: a 2S pack from full (8.4 V) down to about 7.0 V. The board
+# read 7.63 V and 8.03 V on 2026-11-26. vin_min stays 7.0, so the cells near 7.0 V see no load sag.
+ROBOTD_VIN_RANGE = (7.0, 8.4)
+MICRODUCK_GROUNDCONTACT_ROBOTD_HD1910_ROBOT_CFG = _robot(
+    get_groundcontact_hd1910_spec, backlash=False, vin_range=ROBOTD_VIN_RANGE
+)
 # Every part colliding: VelStand.
 MICRODUCK_ALLCOLLISIONS_HD1910_ROBOT_CFG = _robot(get_allcollisions_hd1910_spec, backlash=False)
 MICRODUCK_ALLCOLLISIONS_BACKLASH_HD1910_ROBOT_CFG = _robot(get_allcollisions_backlash_hd1910_spec, backlash=True)

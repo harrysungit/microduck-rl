@@ -50,8 +50,15 @@ from mjlab_microduck.tasks.backlash import make_backlash_variant
 # Feetech HD-1910 servo variant: the walk robot with the HD-1910
 # actuator and mass model; rewards, randomization and curricula as the XL330
 # tasks (see actuators/hd1910/).
+from dataclasses import fields as _fields
 from dataclasses import replace as _replace
 
+from mjlab.envs.mdp.actions import JointPositionActionCfg
+
+# Before any registration: importing one of these modules first imports mjlab, which loads this
+# package mid-way through them. The import below then fails and nothing must be registered yet,
+# or the next import of this package registers the same tasks twice.
+from microduck_rl.actions.robotd import RobotdJointPositionActionCfg
 from microduck_rl.actuators.hd1910.robot import (
     MICRODUCK_WALK_BACKLASH_HD1910_ROBOT_CFG,
     MICRODUCK_WALK_HD1910_ROBOT_CFG,
@@ -101,6 +108,7 @@ from microduck_rl.actuators.hd1910.robot import (
     MICRODUCK_ALLCOLLISIONS_HD1910_ROBOT_CFG,
     MICRODUCK_GROUNDCONTACT_BACKLASH_HD1910_ROBOT_CFG,
     MICRODUCK_GROUNDCONTACT_HD1910_ROBOT_CFG,
+    MICRODUCK_GROUNDCONTACT_ROBOTD_HD1910_ROBOT_CFG,
 )
 
 
@@ -133,7 +141,24 @@ def _hd1910_velstand_rl():
     return rl
 
 
+def _make_sitstand_robotd_env_cfg(**kwargs):
+    """Sit-stand whose joint targets go through robotd's deployment chain (actions/robotd.py).
+
+    Everything else is the official sit-stand config: rewards, curricula, commands and
+    observations, including the raw last action. The plain HD-1910 sit-stand task stays as it was.
+    """
+    cfg = make_microduck_sitstand_env_cfg(**kwargs)
+    action = cfg.actions["joint_pos"]
+    if type(action) is not JointPositionActionCfg:
+        raise TypeError(f"expected the official JointPositionActionCfg, got {type(action).__name__}")
+    cfg.actions["joint_pos"] = RobotdJointPositionActionCfg(
+        **{f.name: getattr(action, f.name) for f in _fields(action)}
+    )
+    return cfg
+
+
 _GC, _GC_BL = MICRODUCK_GROUNDCONTACT_HD1910_ROBOT_CFG, MICRODUCK_GROUNDCONTACT_BACKLASH_HD1910_ROBOT_CFG
+_GC_ROBOTD = MICRODUCK_GROUNDCONTACT_ROBOTD_HD1910_ROBOT_CFG
 _AC, _AC_BL = MICRODUCK_ALLCOLLISIONS_HD1910_ROBOT_CFG, MICRODUCK_ALLCOLLISIONS_BACKLASH_HD1910_ROBOT_CFG
 _GROUND_PICK_RL = _hd1910_rl(MicroduckGroundPickRlCfg, "ground_pick_hd1910")
 _KICK_RIGHT_RL = _hd1910_rl(MicroduckBallKickRlCfg, "ball_kick_right_hd1910")
@@ -146,6 +171,8 @@ HD1910_SKILL_TASKS = (
      _hd1910_rl(MicroduckStandUpRlCfg, "microduck_stand_hd1910"), _GC, None),
     ("Mjlab-SitStand-Flat-MicroDuck-HD1910", make_microduck_sitstand_env_cfg, {},
      _hd1910_rl(MicroduckSitStandRlCfg, "microduck_sitstand_hd1910"), _GC, None),
+    ("Mjlab-SitStand-Flat-MicroDuck-HD1910-Robotd", _make_sitstand_robotd_env_cfg, {},
+     _hd1910_rl(MicroduckSitStandRlCfg, "microduck_sitstand_robotd_hd1910"), _GC_ROBOTD, None),
     ("Mjlab-GroundPick-Flat-MicroDuck-HD1910", make_microduck_ground_pick_env_cfg, {}, _GROUND_PICK_RL, _GC, None),
     ("Mjlab-GroundPick-Flat-Backlash-MicroDuck-HD1910", make_microduck_ground_pick_env_cfg, {}, _GROUND_PICK_RL, None, _GC_BL),
     ("Mjlab-BallKick-Flat-MicroDuck-HD1910", make_microduck_ball_kick_env_cfg, {"kick_foot": "right"}, _KICK_RIGHT_RL, _GC, None),

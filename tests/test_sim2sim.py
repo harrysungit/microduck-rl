@@ -273,3 +273,40 @@ def test_sitstand_levels_and_schedules():
     assert sim2sim.schedule_for(sim2sim.LEVELS[0]) is sim2sim.SCHEDULE
     for schedule in (sim2sim.SIT_FROM_STAND, sim2sim.SIT_FROM_SEAT):
         assert all(cmd[0] in (0.0, 1.0) and cmd[1:] == (0.0, 0.0) for _, cmd, _ in schedule)
+
+
+# -- robotd's target chain
+def test_robotd_levels_draw_the_battery_from_the_tasks_range():
+    from microduck_rl.actuators.hd1910.robot import ROBOTD_VIN_RANGE
+
+    assert sim2sim.ROBOTD_VIN_RANGE == ROBOTD_VIN_RANGE  # copied constant, kept equal to the training task's
+    robotd = [lv for lv in sim2sim.SITSTAND_LEVELS if lv.robotd]
+    assert {lv.start for lv in robotd} == {"standing", "seated"} and any(lv.randomize for lv in robotd)
+    assert all(lv.vin_range == ROBOTD_VIN_RANGE and lv.episodes >= 16 for lv in robotd)
+    for lv in robotd:
+        vins = [sample_params(lv, np.random.default_rng(s), 14)["vin"] for s in range(64)]
+        assert min(vins) >= 7.0 and max(vins) <= 8.4 and max(vins) - min(vins) > 1.0, lv.key
+    # Levels without a range keep their draws: a fixed level draws nothing, a randomized one the old range.
+    l3, l3dr = (next(lv for lv in sim2sim.SITSTAND_LEVELS if lv.key == k) for k in ("L3", "L3-dr"))
+    rng = np.random.default_rng(0)
+    assert sample_params(l3, rng, 14)["vin"] == l3.vin
+    assert rng.random() == np.random.default_rng(0).random()
+    vins = [sample_params(l3dr, np.random.default_rng(s), 14)["vin"] for s in range(64)]
+    assert min(vins) >= sim2sim.VIN_RANGE[0] and max(vins) <= sim2sim.VIN_RANGE[1]
+
+
+def test_the_torque_cap_follows_the_levels_battery_range(assets):
+    bam = sim2sim.load_model(str(sim2sim.SERVO_PARAMS))
+    for vin_range, top in ((None, max(sim2sim.VIN_RANGE)), ((7.0, 8.4), 8.4)):
+        model, *_ = make(assets, replace(NOMINAL, vin_range=vin_range))
+        assert np.allclose(model.actuator_forcerange[:, 1], top * bam.kt.value / bam.R.value)
+
+
+def test_posture_segments_report_the_net_turn():
+    traces = posture_traces(height_profile)
+    # Turns 30 degrees during the sit-down and back by 40 through the +-180 wrap during the stand-up.
+    traces["yaw"] = [170.0 + (30.0 if t > 3.0 else 0.0) - (40.0 if t > 6.0 else 0.0) for t in traces["t"]]
+    traces["yaw"] = [(y + 180.0) % 360.0 - 180.0 for y in traces["yaw"]]
+    segs = sim2sim.posture_segments(traces, POSTURES)
+    assert [round(s["yaw_change_deg"], 6) for s in segs] == [0.0, 30.0, -40.0]
+    assert "yaw_change_deg" not in sim2sim.posture_segments(posture_traces(height_profile), POSTURES)[1]

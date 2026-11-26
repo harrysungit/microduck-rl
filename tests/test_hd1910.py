@@ -1,12 +1,15 @@
 """HD-1910 servo variant: parameters, mass model and task registration (CPU)."""
 
 import hashlib
+from dataclasses import fields
 
 import numpy as np
 import pytest
 from bam.model import load_model
+from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg
 
+from microduck_rl.actions.robotd import RobotdJointPositionActionCfg
 from microduck_rl.actuators.hd1910.actuator import (
     PARAMS_JSON,
     PARAMS_SHA256,
@@ -128,6 +131,25 @@ def test_skill_task_runs_on_the_hd1910_robot(task_id):
         if "BallKick" in task_id:
             assert "ball" in cfg.scene.entities
     assert load_rl_cfg(task_id).experiment_name.endswith("_hd1910")
+
+
+ROBOTD_SITSTAND, SITSTAND = "Mjlab-SitStand-Flat-MicroDuck-HD1910-Robotd", "Mjlab-SitStand-Flat-MicroDuck-HD1910"
+
+
+@pytest.mark.parametrize("play", [False, True])
+def test_robotd_sitstand_changes_only_the_target_chain_and_the_battery(play):
+    new, old = load_env_cfg(ROBOTD_SITSTAND, play=play), load_env_cfg(SITSTAND, play=play)
+    a_new, a_old = new.actions["joint_pos"], old.actions["joint_pos"]
+    assert type(a_old) is JointPositionActionCfg and type(a_new) is RobotdJointPositionActionCfg
+    assert all(getattr(a_new, f.name) == getattr(a_old, f.name) for f in fields(a_old))
+    assert (a_new.voltage_adapt, a_new.nominal_voltage, a_new.head_lowpass, a_new.legs_lowpass) == (True, 7.4, 0.5, 0.7)
+    (s_new,), (s_old,) = (c.scene.entities["robot"].articulation.actuators for c in (new, old))
+    assert s_old.vin_range == (7.4, 8.0) and s_new.vin_range == (7.0, 8.4)
+    assert {**vars(s_new), "vin_range": None} == {**vars(s_old), "vin_range": None}  # P 5 and the rest unchanged
+    assert new.scene.entities["robot"].spec_fn is old.scene.entities["robot"].spec_fn
+    for part in ("observations", "rewards", "commands", "events", "terminations", "curriculum"):
+        assert repr(getattr(new, part)) == repr(getattr(old, part)), part
+    assert load_rl_cfg(ROBOTD_SITSTAND).experiment_name == "microduck_sitstand_robotd_hd1910"
 
 
 def test_velstand_hd1910_never_downloads_xl330_teachers():

@@ -59,6 +59,10 @@ The Roulade trains but does not pass its contract; see the
 - `Mjlab-BallKick-Flat-MicroDuck-HD1910`, `Mjlab-BallKickLeft-Flat[-Backlash]-MicroDuck-HD1910`
 - `Mjlab-Roulade-Flat-MicroDuck-HD1910`
 
+`Mjlab-SitStand-Flat-MicroDuck-HD1910-Robotd` is sit-stand with the target
+processing robotd applies on the robot (voltage scale, low-pass) and a
+7.0–8.4 V battery; see [DEPLOY.md](docs/DEPLOY.md#what-robotd-does-to-the-targets).
+
 Backlash variants use the dense Jacobian: with 34 DOFs, MuJoCo Warp would pick
 its sparse path, which is slower here. VelStand's behaviour cloning takes its
 teachers from local HD-1910 checkpoints (`HD1910_STAND_EXPERT`,

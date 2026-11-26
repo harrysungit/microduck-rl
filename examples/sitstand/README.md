@@ -1,6 +1,8 @@
 # Sit and stand
 
 `Mjlab-SitStand-Flat-MicroDuck-HD1910`: sits down and stands up on command.
+Its twin `Mjlab-SitStand-Flat-MicroDuck-HD1910-Robotd` trains with the target
+processing robotd applies on the robot ([DEPLOY.md](../../docs/DEPLOY.md#what-robotd-does-to-the-targets)).
 
 **Status:** withdrawn. Passed the 0.1.0 gate in the training world and MuJoCo
 C sim2sim, which scored end states only: on the way down its head shell hit

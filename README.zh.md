@@ -45,6 +45,9 @@ Roulade（前滚翻）能训练，但没通过它的契约，见[路线图](docs
 - `Mjlab-BallKick-Flat-MicroDuck-HD1910`、`Mjlab-BallKickLeft-Flat[-Backlash]-MicroDuck-HD1910`
 - `Mjlab-Roulade-Flat-MicroDuck-HD1910`
 
+`Mjlab-SitStand-Flat-MicroDuck-HD1910-Robotd` 是加上 robotd 在机器人上对目标的处理（电压缩放、低通）、
+电池 7.0–8.4 V 的坐站任务，见 [DEPLOY.md](docs/DEPLOY.md#what-robotd-does-to-the-targets)。
+
 带齿隙的版本用稠密雅可比：34 个自由度时 MuJoCo Warp 会选稀疏路径，在这里更慢。VelStand 的行为克隆
 从本地 HD-1910 检查点取老师（`HD1910_STAND_EXPERT`、`HD1910_WALK_ANCHOR`）。
 

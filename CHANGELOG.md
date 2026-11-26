@@ -14,6 +14,13 @@
   untracked sources, the launcher and package versions.
 - `env/setup.sh` honours `MICRODUCK_RL_DEPS`, so one environment outside the
   checkout can serve several worktrees.
+- `Mjlab-SitStand-Flat-MicroDuck-HD1910-Robotd`: sit-stand trained with the
+  targets robotd sends (`7.4 V / battery` action scale, low-pass 0.5 head /
+  0.7 legs) over a 7.0–8.4 V battery. sim2sim's robotd levels (`L0-robotd`,
+  `L3-robotd*`) run the same arithmetic, and every sit-stand report gives each
+  transition's net turn.
+- Tests clear `MICRODUCK_RL_*` from the environment: under `env/activate.sh`
+  the upstream-check test fetched its fixture into the shared review cache.
 
 ## 0.1.0 (2026-11-06)
 

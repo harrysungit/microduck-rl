@@ -38,6 +38,7 @@ def test_real_fetch_diff_review_and_network_failure(tmp_path, monkeypatch):
     (root / "env/pins.toml").write_text(f'[repos.microduck_rl]\nurl = "{url}"\ncommit = "{pin}"\n')
     (root / "pyproject.toml").write_text(f'[project]\ndependencies = ["mjlab-microduck @ git+{url}@{pin}"]\n')
     assert check(root)["status"] == "CURRENT"
+    assert (root / ".cache/upstream-review.git").is_dir()  # the fixture's own cache, never the runtime's
     (upstream / "AGENTS.md").write_text("new safety rule\n")
     git(upstream, "commit", "-am", "new rule")
     new = git(upstream, "rev-parse", "HEAD")

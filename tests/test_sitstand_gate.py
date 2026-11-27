@@ -29,7 +29,8 @@ def test_the_spec_lists_the_approved_scenes():
     assert {s.scenario for s in scenes} == {"stand_cycle", "sit_cycle", "stand_hold", "sit_hold"}
     fallback = g.fallback_scenes(PROTOCOL)
     assert len(fallback) == 2 * 128 and {s.vin for s in fallback} == {7.4, 8.0} and all(s.head for s in fallback)
-    assert CRIT["min_success_rate"] == {"nominal": None, "disturbed": None}  # set after the baseline, by the user
+    # set on the kissqy baseline (100% / 84.4%): a policy may not be clearly worse than the one the robot runs
+    assert CRIT["min_success_rate"] == {"nominal": 0.98, "disturbed": 0.80}
     assert CRIT["zero_tolerance_conditions"] == ["nominal"]
     assert (CRIT["head_deviation_rad"], CRIT["head_deviation_frac_max"]) == (0.2, 0.2)
 
@@ -210,12 +211,19 @@ BOTH = {"nominal": 0.95, "disturbed": 0.80}
 
 
 def test_without_thresholds_the_verdict_is_undecided_unless_something_failed():
-    assert g.verdict(summary(), CRIT, None)[0] == "UNDECIDED"
-    assert g.verdict(summary(falls={"nominal": ["a"]}), CRIT, None)[0] == "FAILED"
-    assert g.verdict(summary(head={"nominal": ["a#1"]}), CRIT, None)[0] == "FAILED"
-    assert g.verdict(summary(broken=["a"]), CRIT, None)[0] == "FAILED"
+    unset = crit(min_success_rate={"nominal": None, "disturbed": None})
+    assert g.verdict(summary(), unset, None)[0] == "UNDECIDED"
+    assert g.verdict(summary(falls={"nominal": ["a"]}), unset, None)[0] == "FAILED"
+    assert g.verdict(summary(head={"nominal": ["a#1"]}), unset, None)[0] == "FAILED"
+    assert g.verdict(summary(broken=["a"]), unset, None)[0] == "FAILED"
     status, why = g.verdict(summary(), crit(min_success_rate={"nominal": 0.95, "disturbed": None}), None)
     assert status == "UNDECIDED" and "disturbed" in why[0]
+
+
+def test_the_frozen_thresholds_pass_a_kissqy_like_result_and_fail_a_worse_one():
+    assert g.verdict(summary(1.0, 0.844), CRIT, None) == ("PASSED", [])
+    assert g.verdict(summary(0.97, 0.90), CRIT, None)[0] == "FAILED"
+    assert g.verdict(summary(1.0, 0.79), CRIT, None)[0] == "FAILED"
 
 
 def test_falls_and_head_failures_are_zero_tolerance_in_nominal_only():
@@ -401,4 +409,4 @@ def test_summary_and_report_from_scene_results(tmp_path):
     g.write_markdown(tmp_path, report)
     text = (tmp_path / "README.md").read_text()
     assert "Stage automatic check: FAILED" in text and "| sit_hold |" in text
-    assert "Falls (scenes): nominal 0, disturbed 0" in text and "Thresholds: nominal unset, disturbed unset" in text
+    assert "Falls (scenes): nominal 0, disturbed 0" in text and "Thresholds: nominal 98%, disturbed 80%" in text

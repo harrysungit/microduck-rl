@@ -44,7 +44,7 @@
     "zero_tolerance_conditions": ["nominal"],
     "max_falls": 0,
     "max_hold_head_failures": 0,
-    "min_success_rate": {"nominal": null, "disturbed": null},
+    "min_success_rate": {"nominal": 0.98, "disturbed": 0.80},
     "not_below_reference": null
   }
 }

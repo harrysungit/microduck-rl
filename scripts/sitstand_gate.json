@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "about": "Protocol and criteria of scripts/sitstand_gate.py. The report records this file's sha256; change it only on purpose, and say why in the commit.",
+  "protocol": {
+    "physics": "training-equivalent: ground-contact collision model, 5 ms step, solver 30/50, joint speeds one step late, true trunk state; robotd's target chain",
+    "segment_s": 6.0,
+    "scenarios": {
+      "stand_cycle": {"start": "standing", "postures": ["sit", "stand", "sit", "stand"]},
+      "sit_cycle": {"start": "seated", "postures": ["stand", "sit", "stand", "sit"]},
+      "stand_hold": {"start": "standing", "postures": ["stand", "stand", "stand", "stand"]},
+      "sit_hold": {"start": "seated", "postures": ["sit", "sit", "sit", "sit"]}
+    },
+    "conditions": ["nominal", "disturbed"],
+    "voltages": [7.4, 8.0],
+    "seeds": 16,
+    "head_command_from_seed": 8,
+    "head_command_range_rad": [[-1.10, 1.10], [-1.10, 1.10], [-1.40, 1.40], [-0.31, 0.31]],
+    "disturbed": {"latency_ms": [15.0, 30.0], "push_mps": 0.2},
+    "fallback": {
+      "seconds": 30.0,
+      "scenes_per_variant": 128,
+      "variants": ["head_jerks", "head_jerks_and_tips"],
+      "head_resample_s": [2.0, 5.0],
+      "jerk_interval_s": [0.3, 0.8],
+      "jerk_prob": 0.4,
+      "jerk_flip_frac": 0.5,
+      "tip_interval_s": [3.0, 6.0],
+      "tip_prob": 0.5,
+      "tip_ang_vel_rad_s": [1.5, 3.25],
+      "tip_lateral_frac": 0.3,
+      "lean_deg": 20.0
+    }
+  },
+  "criteria": {
+    "reach_s": 3.0,
+    "sit_z_max_m": 0.075,
+    "stand_z_min_m": 0.10,
+    "upright_deg": 30.0,
+    "fell_deg": 70.0,
+    "hold_window_s": 2.0,
+    "head_deviation_rad": 0.2,
+    "head_deviation_frac_max": 0.2,
+    "max_falls": 0,
+    "max_hold_head_failures": 0,
+    "min_success_rate": null,
+    "not_below_reference": null
+  }
+}

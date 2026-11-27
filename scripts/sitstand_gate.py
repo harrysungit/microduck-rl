@@ -4,8 +4,10 @@ The acceptance check of a sit-stand policy, judged the way Pollen's sit-stand ta
 
 - every posture command is an attempt. It succeeds when the trunk reaches the commanded posture within
   ``reach_s``, stays there to the end of the segment, the robot does not fall, and in the segment's last
-  ``hold_window_s`` (the hold) the head neither touches the ground nor stays off its commanded pose. A fall or a
-  broken simulation fails the attempt; nothing leaves the denominator;
+  ``hold_window_s`` (the hold) the head does not stay off its commanded pose, and in the held part
+  (``hold_head_contact``: the last window, or the whole held phase) the head does not touch the ground. A fall or a
+  broken simulation fails the attempt; nothing leaves the denominator. The first policy target fills the servo
+  latency line, as the training's delay buffer does after a reset;
 - brief head support during a transition is allowed: such contacts are recorded, not judged;
 - every physics step (5 ms) records which non-foot bodies touch the ground and how hard: parts, start and end,
   peak normal force and impulse. Impact peaks are pointers for the video review, not a verdict;
@@ -216,6 +218,58 @@ class ContactAudit:
         return sorted(self.events, key=lambda e: (e["start_s"], e["body"]))
 
 
+def params_for(scene: Scene, protocol: dict, level: sim2sim.Level, rng: np.random.Generator, n: int) -> dict:
+    """sim2sim's draws, then the scene's own battery and push: 0 in the spec means no pushes (sample_params reads a
+    zero push as "unset" and pushes randomized levels at 0.3 m/s)."""
+    p = sample_params(level, rng, n)
+    p["vin"] = scene.vin  # fixed per scene; the torque cap still follows the task's 7.0-8.4 V range
+    p["push_mps"] = float(protocol["disturbed"]["push_mps"]) if scene.condition == "disturbed" else 0.0
+    p["pushes"] = p["push_mps"] > 0.0
+    return p
+
+
+def send_target(queue: sim2sim.CommandQueue, first: bool, t: float, target: np.ndarray) -> None:
+    """A scene's first target fills the latency line, as mjlab's DelayBuffer backfills its history with the first
+    command after a reset: the servos of a seated start never see HOME, the standing pose."""
+    if first:
+        queue.reset(target)
+    else:
+        queue.send(t, target)
+
+
+class SeatedPerturbations:
+    """The fall-back battery's head command and kicks, as the training's seated events fire them: the head command
+    resampled in the live range, jerks (a sign flip or a fresh sample) and, with tips, backward pitch kicks. The
+    battery's scenes are seated throughout, so every event applies."""
+
+    def __init__(self, fb: dict, rng: np.random.Generator, draw_head, tips: bool):
+        self.fb, self.rng, self.draw_head, self.tips = fb, rng, draw_head, tips
+        self.next_resample = rng.uniform(*fb["head_resample_s"])
+        self.next_jerk = rng.uniform(*fb["jerk_interval_s"])
+        self.next_tip = rng.uniform(*fb["tip_interval_s"])
+        self.counts = {"head_resamples": 0, "jerks": 0, "tips": 0}
+
+    def step(self, t: float, head_cmd: np.ndarray, qvel: np.ndarray) -> np.ndarray:
+        fb, rng = self.fb, self.rng
+        if t >= self.next_resample:
+            head_cmd = self.draw_head()
+            self.counts["head_resamples"] += 1
+            self.next_resample += rng.uniform(*fb["head_resample_s"])
+        if t >= self.next_jerk:
+            if rng.random() < fb["jerk_prob"]:
+                head_cmd = -head_cmd if rng.random() < fb["jerk_flip_frac"] else self.draw_head()
+                self.counts["jerks"] += 1
+            self.next_jerk += rng.uniform(*fb["jerk_interval_s"])
+        if self.tips and t >= self.next_tip:
+            if rng.random() < fb["tip_prob"]:
+                mag = rng.uniform(*fb["tip_ang_vel_rad_s"])
+                roll = rng.uniform(-1.0, 1.0) * fb["tip_lateral_frac"]
+                qvel[3:6] += (roll * mag, -mag, 0.0)  # free joint: body-frame angular velocity; -y is nose up
+                self.counts["tips"] += 1
+            self.next_tip += rng.uniform(*fb["tip_interval_s"])
+        return head_cmd
+
+
 # -- one scene -----------------------------------------------------------------------------------------------------
 def run_scene(scene: Scene, spec: dict, onnx: Path, assets: Path, servo_params: Path, policy=None,
               render: dict | None = None, keep_traces: bool = False) -> dict:
@@ -232,8 +286,7 @@ def _run_scene(scene, spec, onnx, assets, servo_params, policy, render, keep_tra
     names, n = policy.joint_names, len(policy.joint_names)
     neck = [names.index(j) for j in NECK_JOINTS]
     level = level_for(scene, protocol)
-    p = sample_params(level, setup, n)
-    p["vin"] = scene.vin  # fixed per scene; the torque cap still follows the task's 7.0-8.4 V range
+    p = params_for(scene, protocol, level, setup, n)
     model = build_model(level, assets, names, servo_params, p)
     data = mujoco.MjData(model)
     servos = Servos(model, names, servo_params, p, level.latency_ms, runtime)
@@ -256,13 +309,10 @@ def _run_scene(scene, spec, onnx, assets, servo_params, policy, render, keep_tra
     head_range = np.array(protocol["head_command_range_rad"], dtype=float)
     draw_head = lambda: commands.uniform(head_range[:, 0], head_range[:, 1])  # noqa: E731
     seg_heads = [draw_head() if scene.head else np.zeros(4) for _ in postures]
-    fb = protocol["fallback"]
-    events = {"pushes": 0, "head_resamples": 0, "jerks": 0, "tips": 0}
     head_cmd = seg_heads[0].copy()
-    next_resample = commands.uniform(*fb["head_resample_s"])
-    next_jerk = commands.uniform(*fb["jerk_interval_s"])
-    next_tip = commands.uniform(*fb["tip_interval_s"])
-    tips = scene.kind == "fallback" and scene.scenario == "head_jerks_and_tips"
+    perturb = SeatedPerturbations(protocol["fallback"], commands, draw_head,
+                                  tips=scene.kind == "fallback" and scene.scenario == "head_jerks_and_tips")
+    pushes = 0
 
     action_scale = policy.scale * float(robotd_chain.voltage_scale(np.float64(p["vin"])))
     alpha = np.array(robotd_chain.joint_alphas(names))
@@ -282,32 +332,18 @@ def _run_scene(scene, spec, onnx, assets, servo_params, policy, render, keep_tra
         if scene.kind == "posture":
             head_cmd = seg_heads[seg]
         else:  # the training's head command, plus the seated fall-back perturbations (always seated here)
-            if t0 >= next_resample:
-                head_cmd, events["head_resamples"] = draw_head(), events["head_resamples"] + 1
-                next_resample += commands.uniform(*fb["head_resample_s"])
-            if t0 >= next_jerk:
-                if commands.random() < fb["jerk_prob"]:
-                    head_cmd = -head_cmd if commands.random() < fb["jerk_flip_frac"] else draw_head()
-                    events["jerks"] += 1
-                next_jerk += commands.uniform(*fb["jerk_interval_s"])
-            if tips and t0 >= next_tip:
-                if commands.random() < fb["tip_prob"]:
-                    mag = commands.uniform(*fb["tip_ang_vel_rad_s"])
-                    roll = commands.uniform(-1.0, 1.0) * fb["tip_lateral_frac"]
-                    data.qvel[3:6] += (roll * mag, -mag, 0.0)  # free joint: body-frame angular velocity, nose up
-                    events["tips"] += 1
-                next_tip += commands.uniform(*fb["tip_interval_s"])
+            head_cmd = perturb.step(t0, head_cmd, data.qvel)
         obs = observer(data, last_action, np.array([flag, 0.0, 0.0]))
         obs[-10:-6] = head_cmd  # [twist(3), head_pose(4), body_pose(6)]: the head command slot
         action = policy(obs)
         target = robotd_chain.targets(action, policy.home, action_scale,
                                       policy.home if filtered is None else filtered, np.array([filtered is None]), alpha)
         filtered = target
-        servos.queue.send(data.time, target)
+        send_target(servos.queue, k == 0, data.time, target)
         if p["pushes"] and data.time >= next_push:
             data.qvel[0:2] += runtime.uniform(-p["push_mps"], p["push_mps"], 2)
             next_push += runtime.uniform(3.0, 6.0)
-            events["pushes"] += 1
+            pushes += 1
         tau = 0.0
         for _ in range(substeps):
             t_before = data.time
@@ -340,7 +376,8 @@ def _run_scene(scene, spec, onnx, assets, servo_params, policy, render, keep_tra
     tr = {k: v[:done] for k, v in tr.items()}
     contacts = audit.finish()
     result = {"id": scene.id, "scene": vars(scene), "init_hash": init_hash, "vin": p["vin"], "fell_at_s": fell_at,
-              "error": error, "events": events, "impact_peak_N": audit.peak_n, "impact_peak_s": audit.peak_t,
+              "error": error, "events": {"pushes": pushes, **perturb.counts},
+              "impact_peak_N": audit.peak_n, "impact_peak_s": audit.peak_t,
               "impact_peak_bodies": audit.peak_bodies}
     head_events = [e for e in contacts if e["head"]]
     other = [e for e in contacts if not e["head"]]
@@ -407,7 +444,9 @@ def score_attempts(tr: dict, postures: list[str], seg_s: float, start_posture: s
                 row["reasons"].append("not_in_posture_at_end")
             elif row["settled_s"] > criteria["reach_s"]:
                 row["reasons"].append("reached_late")
-            touch = [e for e in head_events if e["start_s"] < end and e["end_s"] > end - hold]
+            since = contact_window_start(row, start, end, hold, criteria.get("hold_head_contact", "last_window"))
+            row["head_contact_from_s"] = since
+            touch = [e for e in head_events if e["start_s"] < end and e["end_s"] > since]
             row["head_contact_in_hold"] = [{k: e[k] for k in ("body", "start_s", "end_s", "peak_N")} for e in touch]
             if touch:
                 row["reasons"].append("head_contact_in_hold")
@@ -417,6 +456,19 @@ def score_attempts(tr: dict, postures: list[str], seg_s: float, start_posture: s
         out.append(row)
         previous = posture
     return out
+
+
+def contact_window_start(row: dict, start: float, end: float, hold: float, rule: str) -> float:
+    """Where head contact starts to count. last_window: the segment's last hold_window_s. hold_phase: the whole held
+    part, the whole segment when the posture does not change, else from the arrival (the last window if it never
+    arrived); head support before the arrival is transition support."""
+    if rule == "last_window":
+        return end - hold
+    if rule != "hold_phase":
+        raise ValueError(f"unknown hold_head_contact rule {rule!r}")
+    if row["transition"] == "hold":
+        return start
+    return start + row["settled_s"] if row["settled_s"] is not None else end - hold
 
 
 def fallback_metrics(tr: dict, lean_deg: float) -> dict:
@@ -485,7 +537,11 @@ def summarize(results: list[dict], spec: dict) -> dict:
             "neck_tau_while_leaned_Nm": sum(m["neck_tau_leaned_sum_Nm"] for m in ok) / leaned if leaned else None,
             "falls": sum(r.get("fell_at_s") is not None for r in rows),
             "head_contact_scenes": sum(any(c["head"] for c in r.get("contacts", [])) for r in rows)}
-    errors = [r["id"] for r in results if r.get("error")]
+    errors = {c: [] for c in protocol["conditions"]}
+    errors["fallback"] = []
+    for r in results:
+        if r.get("error"):
+            errors["fallback" if r["scene"]["kind"] == "fallback" else r["scene"]["condition"]].append(r["id"])
     return {"cells": cells, "conditions": conditions, "by_transition": by_transition, "reasons": reasons,
             "falls": falls, "hold_head_failures": head_failures, "broken_scenes": errors,
             "head_contacts_outside_hold": {"events": len(head_assist), "scenes": len({c["id"] for c in head_assist}),
@@ -494,9 +550,11 @@ def summarize(results: list[dict], spec: dict) -> dict:
             "impacts": impacts, "fallback": fallback}
 
 
-def paired(results: list[dict], reference: dict) -> dict:
-    """Scene by scene against another policy's gate report: same starts, and where one succeeds and the other not."""
+def paired(results: list[dict], reference: dict, spec_sha256: str, overrides: dict) -> dict:
+    """Scene by scene against another policy's gate report: same spec, same starts, and where one succeeds and the
+    other not. A reference run under another spec or with overrides is not comparable; spec_matches says so."""
     ref = {r["id"]: r for r in reference["scenes"]}
+    rp = reference["provenance"]
     mismatched, worse, better, common = [], [], [], 0
     for r in results:
         o = ref.get(r["id"])
@@ -509,15 +567,18 @@ def paired(results: list[dict], reference: dict) -> dict:
         b = [x["success"] for x in o.get("attempts") or []]
         for i, (x, y) in enumerate(zip(a, b)):
             (worse if y and not x else better if x and not y else []).append(f"{r['id']}#{i}")
-    return {"reference_onnx_sha256": reference["provenance"]["onnx_sha256"], "common_scenes": common,
-            "init_hash_mismatches": mismatched, "reference_succeeds_this_fails": worse,
+    return {"reference_onnx_sha256": rp["onnx_sha256"], "reference_spec_sha256": rp["spec_sha256"],
+            "reference_overrides": rp.get("overrides") or {},
+            "spec_matches": rp["spec_sha256"] == spec_sha256 and not rp.get("overrides") and not overrides,
+            "common_scenes": common, "init_hash_mismatches": mismatched, "reference_succeeds_this_fails": worse,
             "this_succeeds_reference_fails": better,
             "reference_conditions": reference["summary"]["conditions"]}
 
 
 def verdict(summary: dict, criteria: dict, pairing: dict | None) -> tuple[str, list[str]]:
-    """Zero tolerance (falls, hold-window head failures) in the listed conditions; elsewhere those failures count
-    against the success rate only. Each condition's success rate against its own threshold."""
+    """Zero tolerance (falls, hold-window head failures, broken scenes) in the listed conditions; elsewhere those
+    count against the success rate only, and the fall-back battery is reported only. Each condition's success rate
+    against its own threshold."""
     fail, open_ = [], []
     for cond in criteria["zero_tolerance_conditions"]:
         falls, head = summary["falls"].get(cond, []), summary["hold_head_failures"].get(cond, [])
@@ -526,8 +587,8 @@ def verdict(summary: dict, criteria: dict, pairing: dict | None) -> tuple[str, l
         if len(head) > criteria["max_hold_head_failures"]:
             fail.append(f"{cond}: {len(head)} attempts failed the hold-window head check "
                         f"(max {criteria['max_hold_head_failures']})")
-    if summary["broken_scenes"]:
-        fail.append(f"{len(summary['broken_scenes'])} scenes broke")
+        if summary["broken_scenes"].get(cond):
+            fail.append(f"{cond}: {len(summary['broken_scenes'][cond])} scenes broke")
     thresholds = criteria["min_success_rate"]
     unset = [cond for cond in summary["conditions"] if thresholds.get(cond) is None]
     for cond, c in summary["conditions"].items():
@@ -537,6 +598,8 @@ def verdict(summary: dict, criteria: dict, pairing: dict | None) -> tuple[str, l
     if criteria.get("not_below_reference"):
         if pairing is None:
             open_.append("the criteria compare against a reference policy; run with --reference")
+        elif not pairing["spec_matches"]:
+            fail.append("the reference ran another spec or overrides; it cannot be compared")
         else:
             if pairing["init_hash_mismatches"]:
                 fail.append(f"{len(pairing['init_hash_mismatches'])} scenes start differently from the reference")
@@ -623,7 +686,8 @@ def write_markdown(out: Path, report: dict) -> None:
              "Not a robot candidate on its own: the final check is a review of full-motion videos and a robot test.", "",
              f"- Policy: `{pv['onnx']}` (sha256 `{pv['onnx_sha256']}`)",
              f"- Spec: `{pv['spec']}` (sha256 `{pv['spec_sha256']}`){' — PROTOCOL OVERRIDDEN, not a gate run' if pv.get('overrides') else ''}",
-             f"- Physics: {pr['physics']}. Scenes: `{pv['assets']}`; servo model sha256 `{pv['servo_sha256'][:16]}…`",
+             f"- Physics: {pr['physics']}. Scenes: `{pv['assets']}` (all files sha256 "
+             f"`{pv.get('assets_sha256', '?')[:16]}…`); servo model sha256 `{pv['servo_sha256'][:16]}…`",
              f"- Code: {pv['code']}; {pv['scenes']} scenes in {pv['elapsed_s']:.0f} s on {pv['workers']} workers", "",
              "## Attempts", "",
              f"Each posture command is an attempt: reached within {cr['reach_s']:g} s, held to the end of the "
@@ -649,9 +713,13 @@ def write_markdown(out: Path, report: dict) -> None:
               "Falls (scenes): " + ", ".join(f"{c} {len(sm['falls'][c])}" for c in conds) +
               ". Hold-window head failures (attempts): " + ", ".join(
                   f"{c} {len(sm['hold_head_failures'][c])}" for c in conds) +
-              f". Broken scenes: {len(sm['broken_scenes'])}.", "",
+              ". Broken scenes: " + ", ".join(f"{c} {len(v)}" for c, v in sm["broken_scenes"].items()) + ".",
+              f"Head contact counts from {cr.get('hold_head_contact', 'last_window')}: " + (
+                  "the whole segment when the posture does not change, else from the arrival."
+                  if cr.get("hold_head_contact") == "hold_phase" else f"the segment's last {cr['hold_window_s']:g} s."),
+              "",
               "## Contacts (every 5 ms physics step)", "",
-              f"Head (the `neck` subtree) on the ground outside the hold windows, allowed as transition support: "
+              f"Head (the `neck` subtree) on the ground where it is not judged, allowed as transition support: "
               f"{sm['head_contacts_outside_hold']['events']} events in {sm['head_contacts_outside_hold']['scenes']} "
               f"scenes, {sm['head_contacts_outside_hold']['total_s']:.2f} s in all, peak "
               f"{sm['head_contacts_outside_hold']['peak_N']:.2f} N.", "",
@@ -680,6 +748,7 @@ def write_markdown(out: Path, report: dict) -> None:
     if report.get("paired"):
         pa = report["paired"]
         lines += ["", "## Paired with the reference", "",
+                  ("" if pa["spec_matches"] else "**The reference ran another spec or overrides: not comparable.** ") +
                   f"Reference `{pa['reference_onnx_sha256'][:16]}…`, {pa['common_scenes']} common scenes, "
                   f"{len(pa['init_hash_mismatches'])} with a different start. Reference: " + ", ".join(
                       f"{c} {_pct(pa['reference_conditions'].get(c))}" for c in conds) +
@@ -697,18 +766,28 @@ def write_markdown(out: Path, report: dict) -> None:
 
 
 def code_identity() -> str:
+    """The commit, and with local changes the sha256 of `git diff HEAD` plus the untracked files' names."""
+    git = lambda *a: subprocess.run(["git", "-C", str(ROOT), *a], capture_output=True, text=True,  # noqa: E731
+                                    check=True).stdout
     try:
-        head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
-                              check=True).stdout.strip()
-        dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain"], capture_output=True, text=True,
-                               check=True).stdout.strip()
-        return f"microduck-rl {head[:12]}" + (" with local changes" if dirty else "")
+        head, status = git("rev-parse", "HEAD").strip(), git("status", "--porcelain").strip()
+        if not status:
+            return f"microduck-rl {head[:12]}"
+        untracked = sorted(line[3:] for line in status.splitlines() if line.startswith("??"))
+        diff = hashlib.sha256((git("diff", "HEAD") + "\n".join(untracked)).encode()).hexdigest()
+        return f"microduck-rl {head[:12]} with local changes (diff sha256 {diff[:16]}, untracked {untracked})"
     except Exception:  # noqa: BLE001
         return "microduck-rl (no git)"
 
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def tree_sha256(root: Path) -> tuple[str, dict]:
+    """Every file under the assets directory (the scene includes the robot, its meshes and parameters)."""
+    files = {str(p.relative_to(root)): sha256(p) for p in sorted(Path(root).rglob("*")) if p.is_file()}
+    return hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest(), files
 
 
 def _job(args):
@@ -744,16 +823,18 @@ def main() -> None:
         results = list(pool.map(_job, jobs, chunksize=4))
     elapsed = time.time() - t0
     summary = summarize(results, spec)
-    pairing = paired(results, json.loads(args.reference.read_text())) if args.reference else None
+    pairing = (paired(results, json.loads(args.reference.read_text()), spec_sha, overrides)
+               if args.reference else None)
     status, reasons = verdict(summary, spec["criteria"], pairing)
     if overrides:
         status, reasons = "UNDECIDED", [f"protocol overridden ({overrides}): not a gate run"] + reasons
-    assets_scene = args.assets / "scene_hd1910_groundcontact.xml"
+    assets_sha, assets_files = tree_sha256(args.assets)
     report = {"verdict": status, "verdict_reasons": reasons, "spec": spec, "summary": summary, "paired": pairing,
               "provenance": {"title": args.title or args.onnx.resolve().parent.name, "onnx": str(args.onnx.resolve()),
                              "onnx_sha256": sha256(args.onnx), "spec": str(args.spec.resolve()),
                              "spec_sha256": spec_sha, "overrides": overrides, "assets": str(args.assets.resolve()),
-                             "scene_sha256": sha256(assets_scene), "servo_sha256": sha256(args.servo_params),
+                             "assets_sha256": assets_sha, "assets_files": assets_files,
+                             "servo_sha256": sha256(args.servo_params),
                              "code": code_identity(), "argv": sys.argv, "scenes": len(scenes),
                              "workers": args.workers, "elapsed_s": elapsed,
                              "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},

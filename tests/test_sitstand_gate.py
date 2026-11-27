@@ -193,12 +193,12 @@ def test_leaned_back_means_nose_up_past_the_threshold():
 
 
 # -- verdict -------------------------------------------------------------------------------------------------------
-def summary(rate_nominal=0.97, rate_disturbed=0.96, falls=None, head=None, broken=()):
+def summary(rate_nominal=0.97, rate_disturbed=0.96, falls=None, head=None, broken=None):
     conds = {c: {"attempts": 100, "successes": round(100 * r), "rate": r}
              for c, r in (("nominal", rate_nominal), ("disturbed", rate_disturbed))}
     empty = {"nominal": [], "disturbed": []}
     return {"conditions": conds, "falls": {**empty, **(falls or {})}, "hold_head_failures": {**empty, **(head or {})},
-            "broken_scenes": list(broken)}
+            "broken_scenes": {**empty, "fallback": [], **(broken or {})}}
 
 
 def crit(**kw):
@@ -215,7 +215,7 @@ def test_without_thresholds_the_verdict_is_undecided_unless_something_failed():
     assert g.verdict(summary(), unset, None)[0] == "UNDECIDED"
     assert g.verdict(summary(falls={"nominal": ["a"]}), unset, None)[0] == "FAILED"
     assert g.verdict(summary(head={"nominal": ["a#1"]}), unset, None)[0] == "FAILED"
-    assert g.verdict(summary(broken=["a"]), unset, None)[0] == "FAILED"
+    assert g.verdict(summary(broken={"nominal": ["a"]}), unset, None)[0] == "FAILED"
     status, why = g.verdict(summary(), crit(min_success_rate={"nominal": 0.95, "disturbed": None}), None)
     assert status == "UNDECIDED" and "disturbed" in why[0]
 
@@ -226,11 +226,14 @@ def test_the_frozen_thresholds_pass_a_kissqy_like_result_and_fail_a_worse_one():
     assert g.verdict(summary(1.0, 0.79), CRIT, None)[0] == "FAILED"
 
 
-def test_falls_and_head_failures_are_zero_tolerance_in_nominal_only():
-    disturbed_only = summary(falls={"disturbed": ["a", "b"]}, head={"disturbed": ["c#0"]})
-    assert g.verdict(disturbed_only, crit(min_success_rate=BOTH), None) == ("PASSED", [])
+def test_falls_head_failures_and_breaks_are_zero_tolerance_in_nominal_only():
+    elsewhere = summary(falls={"disturbed": ["a", "b"]}, head={"disturbed": ["c#0"]},
+                        broken={"disturbed": ["d"], "fallback": ["e"]})  # counted in the rate, or reported only
+    assert g.verdict(elsewhere, crit(min_success_rate=BOTH), None) == ("PASSED", [])
     status, why = g.verdict(summary(falls={"nominal": ["a"]}), crit(min_success_rate=BOTH), None)
     assert status == "FAILED" and why[0].startswith("nominal: 1 scenes fell")
+    status, why = g.verdict(summary(broken={"nominal": ["a"]}), crit(min_success_rate=BOTH), None)
+    assert status == "FAILED" and why == ["nominal: 1 scenes broke"]
 
 
 def test_each_condition_has_its_own_threshold():
@@ -244,11 +247,103 @@ def test_each_condition_has_its_own_threshold():
 def test_not_below_the_reference_needs_one_and_compares_each_condition():
     c = crit(min_success_rate={"nominal": 0.5, "disturbed": 0.5}, not_below_reference=True)
     assert g.verdict(summary(), c, None)[0] == "UNDECIDED"
-    ref = {"init_hash_mismatches": [], "reference_conditions": summary(0.99, 0.90)["conditions"]}
+    ref = {"spec_matches": True, "init_hash_mismatches": [], "reference_conditions": summary(0.99, 0.90)["conditions"]}
     status, why = g.verdict(summary(0.97, 0.96), c, ref)
     assert status == "FAILED" and "nominal" in why[0]
     assert g.verdict(summary(0.99, 0.96), c, ref)[0] == "PASSED"
     assert g.verdict(summary(0.99, 0.96), c, dict(ref, init_hash_mismatches=["x"]))[0] == "FAILED"
+    status, why = g.verdict(summary(0.99, 0.96), c, dict(ref, spec_matches=False))
+    assert status == "FAILED" and "another spec" in why[0]
+
+
+def report_of(spec_sha, overrides, successes):
+    scene = g.posture_scenes(PROTOCOL)[0]
+    attempts = [{"success": s} for s in successes]
+    return {"provenance": {"onnx_sha256": "r" * 64, "spec_sha256": spec_sha, "overrides": overrides},
+            "summary": {"conditions": {}},
+            "scenes": [{"id": scene.id, "scene": vars(scene), "init_hash": "h", "attempts": attempts}]}
+
+
+def test_pairing_checks_the_spec_and_compares_attempt_by_attempt():
+    mine = report_of(SPEC_SHA, {}, [True, False, True, True])["scenes"]
+    p = g.paired(mine, report_of(SPEC_SHA, {}, [True, True, False, True]), SPEC_SHA, {})
+    assert p["spec_matches"] and p["common_scenes"] == 1 and not p["init_hash_mismatches"]
+    assert [x.rsplit("#", 1)[1] for x in p["reference_succeeds_this_fails"]] == ["1"]
+    assert [x.rsplit("#", 1)[1] for x in p["this_succeeds_reference_fails"]] == ["2"]
+    assert not g.paired(mine, report_of("other", {}, [True] * 4), SPEC_SHA, {})["spec_matches"]
+    assert not g.paired(mine, report_of(SPEC_SHA, {"seeds": 4}, [True] * 4), SPEC_SHA, {})["spec_matches"]
+    assert not g.paired(mine, report_of(SPEC_SHA, {}, [True] * 4), SPEC_SHA, {"seeds": 4})["spec_matches"]
+
+
+def test_the_first_target_fills_the_latency_line():
+    queue = sim2sim.CommandQueue((0.015, 0.030), np.random.default_rng(0))
+    queue.reset(np.zeros(2))  # HOME, as Servos.reset leaves it
+    first, second = np.array([0.5, -0.5]), np.array([0.6, -0.6])
+    g.send_target(queue, True, 0.0, first)
+    np.testing.assert_array_equal(queue.at(0.0), first)  # HOME never reaches the servos
+    np.testing.assert_array_equal(queue.at(0.010), first)
+    g.send_target(queue, False, 0.02, second)
+    np.testing.assert_array_equal(queue.at(0.025), first)  # the second target still waits out its latency
+    np.testing.assert_array_equal(queue.at(0.051), second)
+
+
+def test_a_zero_push_in_the_spec_means_no_pushes():
+    protocol = copy.deepcopy(PROTOCOL)
+    scene = next(s for s in g.posture_scenes(protocol) if s.condition == "disturbed")
+    p = g.params_for(scene, protocol, g.level_for(scene, protocol), np.random.default_rng(0), 14)
+    assert p["pushes"] and p["push_mps"] == 0.2 and p["vin"] == scene.vin
+    protocol["disturbed"]["push_mps"] = 0.0
+    p = g.params_for(scene, protocol, g.level_for(scene, protocol), np.random.default_rng(0), 14)
+    assert not p["pushes"] and p["push_mps"] == 0.0  # sample_params alone would push at 0.3 m/s
+    nominal = g.posture_scenes(protocol)[0]
+    assert not g.params_for(nominal, protocol, g.level_for(nominal, protocol), np.random.default_rng(0), 14)["pushes"]
+
+
+def perturbations(**fb):
+    params = copy.deepcopy(PROTOCOL["fallback"])
+    params.update(fb)
+    lo, hi = np.array(PROTOCOL["head_command_range_rad"]).T
+    rng = np.random.default_rng(3)
+    return g.SeatedPerturbations(params, rng, lambda: rng.uniform(lo, hi), tips=True), lo, hi
+
+
+def test_tips_kick_the_nose_up_in_the_body_frame():
+    pert, *_ = perturbations(tip_prob=1.0, tip_interval_s=[0.1, 0.1], jerk_prob=0.0, head_resample_s=[99, 99])
+    qvel = np.zeros(6)
+    pert.step(0.0, np.zeros(4), qvel)
+    assert not qvel.any()  # not yet due
+    pert.step(0.1, np.zeros(4), qvel)
+    assert pert.counts["tips"] == 1
+    assert 1.5 <= -qvel[4] <= 3.25  # -y in the body frame: nose up, backward (the training's seated_backward_tip)
+    assert abs(qvel[3]) <= 0.3 * -qvel[4] and qvel[5] == 0.0 and not qvel[:3].any()
+
+
+def test_jerks_flip_or_resample_the_head_command_and_resamples_follow_their_interval():
+    pert, lo, hi = perturbations(jerk_prob=1.0, jerk_flip_frac=1.0, jerk_interval_s=[0.3, 0.3], head_resample_s=[99, 99])
+    cmd = np.array([0.1, -0.2, 0.3, -0.05])
+    np.testing.assert_allclose(pert.step(0.3, cmd, np.zeros(6)), -cmd)  # a sign flip
+    pert, lo, hi = perturbations(jerk_prob=1.0, jerk_flip_frac=0.0, jerk_interval_s=[0.3, 0.3], head_resample_s=[99, 99])
+    fresh = pert.step(0.3, cmd, np.zeros(6))
+    assert not np.allclose(fresh, cmd) and np.all((fresh >= lo) & (fresh <= hi))  # a fresh sample in range
+    pert, *_ = perturbations(jerk_prob=0.0, head_resample_s=[2.0, 2.0])
+    for t in np.arange(0.0, 6.01, 0.02):
+        pert.step(float(t), cmd, np.zeros(6))
+    assert pert.counts["head_resamples"] == 3 and pert.counts["jerks"] == 0  # at 2, 4 and 6 s
+
+
+def test_hold_phase_judges_head_contact_over_the_whole_held_part():
+    tr = make_traces(["sit", "sit"], lambda x: 0.06 if x >= 1.0 else 0.115)
+    early = {"body": "jaw_soft", "head": True, "start_s": 7.0, "end_s": 7.2, "peak_N": 1.0}  # 1 s into a sit hold
+    assist = {"body": "jaw_soft", "head": True, "start_s": 0.5, "end_s": 0.8, "peak_N": 1.0}  # before the arrival
+    settled = {"body": "jaw_soft", "head": True, "start_s": 1.5, "end_s": 1.6, "peak_N": 1.0}  # after the arrival
+    last = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [early, assist, settled], None, None, CRIT)
+    assert all(a["success"] for a in last)  # the last-window rule sees none of them
+    phase = crit(hold_head_contact="hold_phase")
+    a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [assist], None, None, phase)
+    assert a[0]["success"] and a[0]["head_contact_from_s"] == pytest.approx(1.0)
+    a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [settled, early], None, None, phase)
+    assert a[0]["reasons"] == ["head_contact_in_hold"] and a[1]["reasons"] == ["head_contact_in_hold"]
+    assert a[1]["transition"] == "hold" and a[1]["head_contact_from_s"] == 6.0
 
 
 # -- short scenes on a stand-in robot ------------------------------------------------------------------------------
@@ -260,6 +355,7 @@ ROBOT = """
       <freejoint/>
       <geom name="trunk_collision" type="box" size="0.03 0.03 0.02" mass="0.4"/>
       <site name="imu"/>
+      <body name="bearing_roll" pos="0 -0.02 -0.02"><geom type="sphere" size="0.005" mass="0.005"/></body>
       <body name="leg" pos="0 0 -0.03">
         <joint name="j1" axis="0 1 0" range="-1 1"/>
         <geom type="capsule" fromto="0 0 0 0 0 -0.04" size="0.008" mass="0.05"/>
@@ -361,6 +457,7 @@ def test_a_fallback_scene_reports_its_metrics_and_perturbations(assets):
 def test_neck_subtree_follows_parent_links(assets):
     spec = mujoco.MjSpec.from_file(str(assets / "scene_hd1910_groundcontact.xml"))
     model = spec.compile()
+    # the right hip bearing_roll, on the training's head-randomization list, is not head
     assert {model.body(b).name for b in g.neck_subtree(model)} == {"neck", "head"}
     assert {model.body(b).name for b in g.foot_bodies(model)} == {"foot"}
 

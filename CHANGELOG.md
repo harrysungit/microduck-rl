@@ -30,7 +30,7 @@
   ground contacts with force and impulse. Falls, head failures and broken
   scenes fail it in the nominal condition; success thresholds are 98%
   nominal and 80% disturbed, set on kissqy's sit-stand policy (512/512 and
-  83.0%). Pollen's seated fall-back metrics are reported, not judged.
+  85.5%). Pollen's seated fall-back metrics are reported, not judged.
 - sim2sim's `seated_pose` takes the largest tilt; its draws do not change.
 - Tests clear `MICRODUCK_RL_*` from the environment: under `env/activate.sh`
   the upstream-check test fetched its fixture into the shared review cache.

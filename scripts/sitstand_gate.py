@@ -11,17 +11,19 @@ The acceptance check of a sit-stand policy, judged the way Pollen's sit-stand ta
   peak normal force and impulse. Impact peaks are pointers for the video review, not a verdict;
 - the official seated fall-back metrics (Pollen's docs/sitstand_policy.md): a seated start held for 30 s under
   seated head jerks, alone and with backward tip kicks; the share of time leaned back past 20 degrees, the share
-  of scenes still leaned back at the end, the neck torque while leaned. Reported only.
+  of scenes still leaned back at the end, the neck torque while leaned. Reported only, as Pollen reports them.
 
 Scenes are fixed: four scenarios (stand_cycle, sit_cycle, stand_hold, sit_hold) of four 6 s segments, in a nominal
 and a disturbed condition (the training's observation noise, latency, randomization and pushes), at two battery
-voltages, 16 seeds each, half of them with random head commands from the training's final range. A scene's random
-numbers depend only on its id, so two policies meet the same starts and disturbances; the report records each
-scene's initial-state hash so that a paired comparison (--reference) can check it.
+voltages, 16 seeds each. The head command is zero, as robotd sends it in sit-stand; moving heads are the fall-back
+battery's. Seated starts tilt at most seated_tilt_deg (the training spawns up to 8 degrees). A scene's random numbers
+depend only on its id, so two policies meet the same starts and disturbances; the report records each scene's
+initial-state hash so that a paired comparison (--reference) can check it.
 
-The protocol and the criteria are in sitstand_gate.json; the report records its sha256. The verdict is a stage
-automatic check: PASSED, FAILED or UNDECIDED (no success-rate threshold set). It never replaces the final review of
-full-motion videos or a robot test; --videos renders one scene per scenario by a fixed rule.
+Verdict, a stage automatic check: no fall and no hold-window head failure in the zero-tolerance conditions (nominal),
+and each condition's success rate at least its threshold. PASSED, FAILED, or UNDECIDED while a threshold is unset.
+The protocol and the criteria are in sitstand_gate.json; the report records its sha256. The verdict never replaces
+the final review of full-motion videos or a robot test; --videos renders one scene per scenario by a fixed rule.
 
     python scripts/sitstand_gate.py --onnx policy.onnx --assets <sim2sim_assets dir> --out-dir <dir> [--videos]
 """
@@ -81,7 +83,8 @@ class Scene:
 
 
 def posture_scenes(protocol: dict) -> list[Scene]:
-    return [Scene("posture", name, cond, float(vin), seed, seed >= protocol["head_command_from_seed"])
+    """Zero head command (robotd's in sit-stand); run_scene still drives one for a Scene built with head=True."""
+    return [Scene("posture", name, cond, float(vin), seed, False)
             for name in protocol["scenarios"] for cond in protocol["conditions"]
             for vin in protocol["voltages"] for seed in range(protocol["seeds"])]
 
@@ -239,7 +242,7 @@ def _run_scene(scene, spec, onnx, assets, servo_params, policy, render, keep_tra
 
     if level.start == "seated":
         assert names[3] == "left_knee" and names[12] == "right_knee", "SIT_KEYFRAME needs the HD-1910 joint order"
-        z, quat, joints = seated_pose(policy.home, setup)
+        z, quat, joints = seated_pose(policy.home, setup, tilt=math.radians(protocol["seated_tilt_deg"]))
     else:
         z, quat, joints = STANDING_Z, (1.0, 0.0, 0.0, 0.0), policy.home.copy()
     data.qpos[0:3], data.qpos[3:7], data.qpos[servos.qadr] = (0.0, 0.0, z), quat, joints
@@ -433,7 +436,9 @@ def summarize(results: list[dict], spec: dict) -> dict:
     posture = [r for r in results if r["scene"]["kind"] == "posture"]
     expected = {s: len(protocol["scenarios"][s]["postures"]) for s in protocol["scenarios"]}
     cells, reasons, by_transition = {}, {}, {}
-    falls, head_failures, head_assist = [], [], []
+    falls = {c: [] for c in protocol["conditions"]}
+    head_failures = {c: [] for c in protocol["conditions"]}
+    head_assist = []
     for r in posture:
         sc = r["scene"]
         attempts = r.get("attempts") or [{"success": False, "reasons": ["error"], "transition": "?"}] * expected[sc["scenario"]]
@@ -447,9 +452,9 @@ def summarize(results: list[dict], spec: dict) -> dict:
             for why in a["reasons"]:
                 reasons[why] = reasons.get(why, 0) + 1
             if any(why in HEAD_REASONS for why in a["reasons"]):
-                head_failures.append(f"{r['id']}#{a.get('segment')}")
+                head_failures[sc["condition"]].append(f"{r['id']}#{a.get('segment')}")
         if r.get("fell_at_s") is not None:
-            falls.append(r["id"])
+            falls[sc["condition"]].append(r["id"])
         hold_touch = {(c["start_s"], c["body"]) for a in attempts for c in a.get("head_contact_in_hold", [])}
         head_assist += [dict(c, id=r["id"]) for c in r.get("contacts", [])
                         if c["head"] and (c["start_s"], c["body"]) not in hold_touch]
@@ -511,16 +516,22 @@ def paired(results: list[dict], reference: dict) -> dict:
 
 
 def verdict(summary: dict, criteria: dict, pairing: dict | None) -> tuple[str, list[str]]:
+    """Zero tolerance (falls, hold-window head failures) in the listed conditions; elsewhere those failures count
+    against the success rate only. Each condition's success rate against its own threshold."""
     fail, open_ = [], []
-    if len(summary["falls"]) > criteria["max_falls"]:
-        fail.append(f"{len(summary['falls'])} scenes fell (max {criteria['max_falls']})")
-    if len(summary["hold_head_failures"]) > criteria["max_hold_head_failures"]:
-        fail.append(f"{len(summary['hold_head_failures'])} attempts failed the hold-window head check "
-                    f"(max {criteria['max_hold_head_failures']})")
+    for cond in criteria["zero_tolerance_conditions"]:
+        falls, head = summary["falls"].get(cond, []), summary["hold_head_failures"].get(cond, [])
+        if len(falls) > criteria["max_falls"]:
+            fail.append(f"{cond}: {len(falls)} scenes fell (max {criteria['max_falls']})")
+        if len(head) > criteria["max_hold_head_failures"]:
+            fail.append(f"{cond}: {len(head)} attempts failed the hold-window head check "
+                        f"(max {criteria['max_hold_head_failures']})")
     if summary["broken_scenes"]:
         fail.append(f"{len(summary['broken_scenes'])} scenes broke")
-    threshold = criteria["min_success_rate"]
+    thresholds = criteria["min_success_rate"]
+    unset = [cond for cond in summary["conditions"] if thresholds.get(cond) is None]
     for cond, c in summary["conditions"].items():
+        threshold = thresholds.get(cond)
         if threshold is not None and (c["rate"] is None or c["rate"] < threshold):
             fail.append(f"{cond}: success {c['successes']}/{c['attempts']} below {threshold:.0%}")
     if criteria.get("not_below_reference"):
@@ -533,8 +544,8 @@ def verdict(summary: dict, criteria: dict, pairing: dict | None) -> tuple[str, l
                 ref = pairing["reference_conditions"].get(cond, {})
                 if ref.get("rate") is not None and c["rate"] is not None and c["rate"] < ref["rate"]:
                     fail.append(f"{cond}: success {c['rate']:.1%} below the reference's {ref['rate']:.1%}")
-    if threshold is None:
-        open_.append("no success-rate threshold is set (criteria.min_success_rate)")
+    if unset:
+        open_.append(f"no success-rate threshold is set for {', '.join(unset)} (criteria.min_success_rate)")
     if fail:
         return "FAILED", fail + open_
     return ("UNDECIDED", open_) if open_ else ("PASSED", [])
@@ -620,8 +631,12 @@ def write_markdown(out: Path, report: dict) -> None:
              f"{cr['hold_window_s']:g} s no head-ground contact and no head joint off its command by more than "
              f"{cr['head_deviation_rad']:g} rad for more than {cr['head_deviation_frac_max']:.0%} of the window. "
              f"Sit: trunk ≤ {cr['sit_z_max_m']:g} m; stand: ≥ {cr['stand_z_min_m']:g} m; tilt < {cr['upright_deg']:g}°. "
-             f"Voltages {', '.join(f'{v:g} V' for v in pr['voltages'])}; {pr['seeds']} seeds per cell, seeds "
-             f"{pr['head_command_from_seed']}+ with head commands.", "",
+             f"Voltages {', '.join(f'{v:g} V' for v in pr['voltages'])}; {pr['seeds']} seeds per cell; head command "
+             f"zero; seated starts tilted at most {pr['seated_tilt_deg']:g}°. Zero tolerance for falls and hold-window "
+             f"head failures in: {', '.join(cr['zero_tolerance_conditions'])}; elsewhere they count against the "
+             f"success rate. Thresholds: " + ", ".join(
+                 f"{c} {'unset' if cr['min_success_rate'].get(c) is None else format(cr['min_success_rate'][c], '.0%')}"
+                 for c in conds) + ".", "",
              "| scenario | " + " | ".join(conds) + " |", "|---|" + "---|" * len(conds)]
     for name in pr["scenarios"]:
         lines.append(f"| {name} | " + " | ".join(_pct(sm["cells"].get(f"{name}/{c}")) for c in conds) + " |")
@@ -631,8 +646,10 @@ def write_markdown(out: Path, report: dict) -> None:
         lines.append(f"| {tt} | " + " | ".join(_pct(sm["by_transition"].get(f"{tt}/{c}")) for c in conds) + " |")
     lines += ["", "Failure reasons (an attempt can have several): " + (", ".join(
         f"{k} {v}" for k, v in sorted(sm["reasons"].items(), key=lambda kv: -kv[1])) or "none") + ".",
-              f"Falls: {len(sm['falls'])} scenes. Hold-window head failures: {len(sm['hold_head_failures'])} attempts. "
-              f"Broken scenes: {len(sm['broken_scenes'])}.", "",
+              "Falls (scenes): " + ", ".join(f"{c} {len(sm['falls'][c])}" for c in conds) +
+              ". Hold-window head failures (attempts): " + ", ".join(
+                  f"{c} {len(sm['hold_head_failures'][c])}" for c in conds) +
+              f". Broken scenes: {len(sm['broken_scenes'])}.", "",
               "## Contacts (every 5 ms physics step)", "",
               f"Head (the `neck` subtree) on the ground outside the hold windows, allowed as transition support: "
               f"{sm['head_contacts_outside_hold']['events']} events in {sm['head_contacts_outside_hold']['scenes']} "
@@ -717,7 +734,6 @@ def main() -> None:
     overrides = {}
     if args.seeds is not None:
         overrides["seeds"] = spec["protocol"]["seeds"] = args.seeds
-        spec["protocol"]["head_command_from_seed"] = args.seeds // 2
     if args.fallback_scenes is not None:
         overrides["fallback_scenes"] = spec["protocol"]["fallback"]["scenes_per_variant"] = args.fallback_scenes
     scenes = posture_scenes(spec["protocol"]) + fallback_scenes(spec["protocol"])

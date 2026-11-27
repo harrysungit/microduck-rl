@@ -25,12 +25,25 @@ def test_the_spec_lists_the_approved_scenes():
     scenes = g.posture_scenes(PROTOCOL)
     assert len(scenes) == 4 * 2 * 2 * 16
     assert len({s.id for s in scenes}) == len(scenes)
-    assert sum(s.head for s in scenes) == len(scenes) // 2
+    assert not any(s.head for s in scenes)  # robotd sends a zero head command in sit-stand
     assert {s.scenario for s in scenes} == {"stand_cycle", "sit_cycle", "stand_hold", "sit_hold"}
     fallback = g.fallback_scenes(PROTOCOL)
     assert len(fallback) == 2 * 128 and {s.vin for s in fallback} == {7.4, 8.0} and all(s.head for s in fallback)
-    assert CRIT["min_success_rate"] is None  # set after the baseline, by the user
+    assert CRIT["min_success_rate"] == {"nominal": None, "disturbed": None}  # set after the baseline, by the user
+    assert CRIT["zero_tolerance_conditions"] == ["nominal"]
     assert (CRIT["head_deviation_rad"], CRIT["head_deviation_frac_max"]) == (0.2, 0.2)
+
+
+def test_seated_starts_tilt_less_than_the_trainings_with_the_same_draws():
+    assert PROTOCOL["seated_tilt_deg"] == 4.0
+    home = np.zeros(14)
+    for seed in range(50):
+        z8, q8, j8 = sim2sim.seated_pose(home, np.random.default_rng(seed))
+        z4, q4, j4 = sim2sim.seated_pose(home, np.random.default_rng(seed), tilt=np.radians(4.0))
+        assert z4 == z8 and np.array_equal(j4, j8)  # same draws: only the tilt shrinks
+        rot = np.zeros(9)
+        mujoco.mju_quat2Mat(rot, np.array(q4))
+        assert np.degrees(np.arccos(rot[8])) <= 4.0 * np.sqrt(2) + 1e-9
 
 
 def test_a_scenes_random_numbers_depend_on_its_id_only():
@@ -179,10 +192,12 @@ def test_leaned_back_means_nose_up_past_the_threshold():
 
 
 # -- verdict -------------------------------------------------------------------------------------------------------
-def summary(rate_nominal=0.97, rate_disturbed=0.96, falls=(), head=(), broken=()):
+def summary(rate_nominal=0.97, rate_disturbed=0.96, falls=None, head=None, broken=()):
     conds = {c: {"attempts": 100, "successes": round(100 * r), "rate": r}
              for c, r in (("nominal", rate_nominal), ("disturbed", rate_disturbed))}
-    return {"conditions": conds, "falls": list(falls), "hold_head_failures": list(head), "broken_scenes": list(broken)}
+    empty = {"nominal": [], "disturbed": []}
+    return {"conditions": conds, "falls": {**empty, **(falls or {})}, "hold_head_failures": {**empty, **(head or {})},
+            "broken_scenes": list(broken)}
 
 
 def crit(**kw):
@@ -191,21 +206,35 @@ def crit(**kw):
     return c
 
 
-def test_without_a_threshold_the_verdict_is_undecided_unless_something_failed():
+BOTH = {"nominal": 0.95, "disturbed": 0.80}
+
+
+def test_without_thresholds_the_verdict_is_undecided_unless_something_failed():
     assert g.verdict(summary(), CRIT, None)[0] == "UNDECIDED"
-    assert g.verdict(summary(falls=["a"]), CRIT, None)[0] == "FAILED"
-    assert g.verdict(summary(head=["a#1"]), CRIT, None)[0] == "FAILED"
+    assert g.verdict(summary(falls={"nominal": ["a"]}), CRIT, None)[0] == "FAILED"
+    assert g.verdict(summary(head={"nominal": ["a#1"]}), CRIT, None)[0] == "FAILED"
     assert g.verdict(summary(broken=["a"]), CRIT, None)[0] == "FAILED"
+    status, why = g.verdict(summary(), crit(min_success_rate={"nominal": 0.95, "disturbed": None}), None)
+    assert status == "UNDECIDED" and "disturbed" in why[0]
 
 
-def test_the_threshold_applies_to_each_condition():
-    assert g.verdict(summary(), crit(min_success_rate=0.95), None) == ("PASSED", [])
-    status, why = g.verdict(summary(rate_disturbed=0.90), crit(min_success_rate=0.95), None)
-    assert status == "FAILED" and "disturbed" in why[0]
+def test_falls_and_head_failures_are_zero_tolerance_in_nominal_only():
+    disturbed_only = summary(falls={"disturbed": ["a", "b"]}, head={"disturbed": ["c#0"]})
+    assert g.verdict(disturbed_only, crit(min_success_rate=BOTH), None) == ("PASSED", [])
+    status, why = g.verdict(summary(falls={"nominal": ["a"]}), crit(min_success_rate=BOTH), None)
+    assert status == "FAILED" and why[0].startswith("nominal: 1 scenes fell")
+
+
+def test_each_condition_has_its_own_threshold():
+    assert g.verdict(summary(), crit(min_success_rate=BOTH), None) == ("PASSED", [])
+    status, why = g.verdict(summary(rate_disturbed=0.75), crit(min_success_rate=BOTH), None)
+    assert status == "FAILED" and why == ["disturbed: success 75/100 below 80%"]
+    status, why = g.verdict(summary(rate_nominal=0.94), crit(min_success_rate=BOTH), None)
+    assert status == "FAILED" and why[0].startswith("nominal")
 
 
 def test_not_below_the_reference_needs_one_and_compares_each_condition():
-    c = crit(min_success_rate=0.5, not_below_reference=True)
+    c = crit(min_success_rate={"nominal": 0.5, "disturbed": 0.5}, not_below_reference=True)
     assert g.verdict(summary(), c, None)[0] == "UNDECIDED"
     ref = {"init_hash_mismatches": [], "reference_conditions": summary(0.99, 0.90)["conditions"]}
     status, why = g.verdict(summary(0.97, 0.96), c, ref)
@@ -354,7 +383,8 @@ def test_summary_and_report_from_scene_results(tmp_path):
                                      "neck_tau_leaned_sum_Nm": 0.5, "error": None}})
     sm = g.summarize(results, spec)
     assert sm["conditions"]["nominal"]["attempts"] == 4 * 2 * 16 * 4
-    assert len(sm["hold_head_failures"]) == 4  # sit_hold seed 0: two conditions x two voltages
+    # sit_hold seed 0 at two voltages, in each condition
+    assert {c: len(v) for c, v in sm["hold_head_failures"].items()} == {"nominal": 2, "disturbed": 2}
     assert sm["head_contacts_outside_hold"]["events"] == 0  # the only head contacts were in hold windows
     fb = sm["fallback"]["head_jerks"]
     assert fb["time_leaned_back"] == pytest.approx(0.1) and fb["leaned_at_end"] == pytest.approx(0.5)
@@ -371,3 +401,4 @@ def test_summary_and_report_from_scene_results(tmp_path):
     g.write_markdown(tmp_path, report)
     text = (tmp_path / "README.md").read_text()
     assert "Stage automatic check: FAILED" in text and "| sit_hold |" in text
+    assert "Falls (scenes): nominal 0, disturbed 0" in text and "Thresholds: nominal unset, disturbed unset" in text

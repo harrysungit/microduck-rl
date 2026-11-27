@@ -236,9 +236,11 @@ def ball_position(level: Level, rng: np.random.Generator) -> tuple[float, float]
     return BALL_OFFSET_X + float(dx), (-BALL_OFFSET_ABS_Y if level.kick_foot == "right" else BALL_OFFSET_ABS_Y) + float(dy)
 
 
-def seated_pose(home: np.ndarray, rng: np.random.Generator) -> tuple[float, tuple, np.ndarray]:
-    """Trunk height, orientation (w, x, y, z) and servo angles of a seated start, as the training spawns one."""
-    yaw, pitch, roll = rng.uniform(-math.pi, math.pi), *rng.uniform(-SEAT_TILT, SEAT_TILT, 2)
+def seated_pose(home: np.ndarray, rng: np.random.Generator,
+                tilt: float = SEAT_TILT) -> tuple[float, tuple, np.ndarray]:
+    """Trunk height, orientation (w, x, y, z) and servo angles of a seated start, as the training spawns one
+    (tilt: the largest pitch and roll, rad; the same draws whatever its value)."""
+    yaw, pitch, roll = rng.uniform(-math.pi, math.pi), *rng.uniform(-tilt, tilt, 2)
     cy, sy, cp, sp, cr, sr = (f(a * 0.5) for a in (yaw, pitch, roll) for f in (math.cos, math.sin))
     quat = (cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy,
             cr * cp * sy - sr * sp * cy)

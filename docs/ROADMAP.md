@@ -29,7 +29,8 @@ review of its full-motion videos.
 - [ ] **Confirm the draft contracts.** The kick (ball speed at least 0.5 m/s)
   and pick (mouth tip within 8 cm of the floor, then standing) thresholds are
   drafts. Done: thresholds set from hardware runs.
-- [ ] **SitStand.** Done: a policy that sits down and stands up smoothly in
+- [ ] **SitStand.** `scripts/sitstand_gate.py` checks it in simulation.
+  Done: a policy that passes the gate and sits down and stands up smoothly in
   full-motion videos, judged as Pollen's sit-stand task is: brief head
   support during a transition is allowed, the head holds its commanded pose
   while seated or standing, and a hard landing fails.

@@ -19,6 +19,16 @@
   0.7 legs) over a 7.0–8.4 V battery. sim2sim's robotd levels (`L0-robotd`,
   `L3-robotd*`) run the same arithmetic, and every sit-stand report gives each
   transition's net turn.
+- `scripts/sitstand_gate.py`: the sit-stand gate, on the training's physics
+  with robotd's chain. Each posture command is an attempt; a fall or a
+  broken scene stays in the denominator. In the hold window the head must
+  stay off the ground and within 0.2 rad of its command; head support during
+  a transition is recorded, not judged. Every 5 ms step records non-foot
+  ground contacts with force and impulse. Falls and hold-window head
+  failures fail it in the nominal condition; success thresholds are 98%
+  nominal and 80% disturbed, set on kissqy's sit-stand policy (512/512 and
+  84.4%). Pollen's seated fall-back metrics are reported, not judged.
+- sim2sim's `seated_pose` takes the largest tilt; its draws do not change.
 - Tests clear `MICRODUCK_RL_*` from the environment: under `env/activate.sh`
   the upstream-check test fetched its fixture into the shared review cache.
 

@@ -133,6 +133,10 @@ python scripts/acceptance.py --task Mjlab-StandUp-Flat-MicroDuck-HD1910 --onnx p
 # Sim2sim: the same ONNX in plain MuJoCo, CPU, with its own servo loop
 python scripts/sim2sim_assets.py --out-dir logs/sim2sim/assets
 python scripts/sim2sim.py --onnx policy.onnx --assets logs/sim2sim/assets --out-dir logs/results/walk_sim2sim
+
+# Sit-stand: every posture command an attempt, on the training's physics with robotd's chain
+python scripts/sitstand_gate.py --onnx sitstand.onnx --assets logs/sim2sim/assets \
+    --out-dir logs/results/sitstand_gate --videos
 ```
 
 The verdict is ACCEPTED, FAILED or UNVERIFIED. UNVERIFIED means nothing failed
@@ -140,6 +144,15 @@ but something could not be checked; it is not a pass. See
 [scripts/acceptance_core.py](scripts/acceptance_core.py) for the contracts.
 A verdict is not a final review: a policy counts only after a review of its
 full-motion videos.
+
+The sit-stand gate replaces the withdrawn sit-stand acceptance. Each posture
+command is an attempt: reached in time, held, no fall, and in the hold the
+head off the ground and on its command; head support during a transition is
+recorded, not judged. Every 5 ms step records which parts touch the ground
+and how hard. Its verdict, PASSED, FAILED or UNDECIDED, is a stage check:
+the protocol and the thresholds are in
+[scripts/sitstand_gate.json](scripts/sitstand_gate.json), and `--videos`
+renders one scene per scenario by a fixed rule for the review.
 
 To deploy, export with Pollen's `scripts/export.py`, which bakes the
 observation normalizer into the ONNX. [docs/DEPLOY.md](docs/DEPLOY.md) has the

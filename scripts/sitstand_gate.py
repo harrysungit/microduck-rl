@@ -193,6 +193,7 @@ class ContactAudit:
         self.step(t, dt, loads)
 
     def step(self, t: float, dt: float, loads: dict[int, float]) -> None:
+        t = round(t, 6)  # data.time sums 5 ms steps (18.78000000000055); the control clock is k * 20 ms (18.78)
         total = sum(loads.values())
         if total > self.peak_n:
             self.peak_n, self.peak_t = total, t
@@ -201,8 +202,8 @@ class ContactAudit:
             ev = self.open.get(body)
             if ev is None:
                 ev = self.open[body] = {"body": self.names[body], "head": body in self.head, "start_s": t,
-                                        "end_s": t + dt, "peak_N": 0.0, "impulse_Ns": 0.0}
-            ev["end_s"], ev["peak_N"] = t + dt, max(ev["peak_N"], f)
+                                        "end_s": round(t + dt, 6), "peak_N": 0.0, "impulse_Ns": 0.0}
+            ev["end_s"], ev["peak_N"] = round(t + dt, 6), max(ev["peak_N"], f)
             ev["impulse_Ns"] += f * dt
         for body in [b for b, ev in self.open.items() if b not in loads and t + dt - ev["end_s"] > MERGE_GAP_S + 1e-9]:
             self._close(body)
@@ -387,7 +388,7 @@ def _run_scene(scene, spec, onnx, assets, servo_params, policy, render, keep_tra
     if scene.kind == "posture":
         result["attempts"] = score_attempts(tr, postures, seg_s, start_posture, head_events, fell_at, error, criteria)
     else:
-        result["fallback"] = fallback_metrics(tr, fb["lean_deg"])
+        result["fallback"] = fallback_metrics(tr, protocol["fallback"]["lean_deg"])
         result["fallback"]["error"] = error
     if keep_traces:
         result["traces"] = {k: v.tolist() for k, v in tr.items()}
@@ -446,7 +447,7 @@ def score_attempts(tr: dict, postures: list[str], seg_s: float, start_posture: s
                 row["reasons"].append("reached_late")
             since = contact_window_start(row, start, end, hold, criteria.get("hold_head_contact", "last_window"))
             row["head_contact_from_s"] = since
-            touch = [e for e in head_events if e["start_s"] < end and e["end_s"] > since]
+            touch = [e for e in head_events if e["start_s"] < end - 1e-6 and e["end_s"] > since + 1e-6]
             row["head_contact_in_hold"] = [{k: e[k] for k in ("body", "start_s", "end_s", "peak_N")} for e in touch]
             if touch:
                 row["reasons"].append("head_contact_in_hold")
@@ -609,6 +610,11 @@ def verdict(summary: dict, criteria: dict, pairing: dict | None) -> tuple[str, l
                     fail.append(f"{cond}: success {c['rate']:.1%} below the reference's {ref['rate']:.1%}")
     if unset:
         open_.append(f"no success-rate threshold is set for {', '.join(unset)} (criteria.min_success_rate)")
+    broken_elsewhere = sum(len(v) for k, v in summary["broken_scenes"].items()
+                           if k not in criteria["zero_tolerance_conditions"])
+    if broken_elsewhere:  # counted against the rate or reported only, but a broken tool must not read as a pass
+        open_.append(f"{broken_elsewhere} scenes outside {', '.join(criteria['zero_tolerance_conditions'])} broke; "
+                     "check them before trusting the report")
     if fail:
         return "FAILED", fail + open_
     return ("UNDECIDED", open_) if open_ else ("PASSED", [])
@@ -687,13 +693,15 @@ def write_markdown(out: Path, report: dict) -> None:
              f"- Policy: `{pv['onnx']}` (sha256 `{pv['onnx_sha256']}`)",
              f"- Spec: `{pv['spec']}` (sha256 `{pv['spec_sha256']}`){' — PROTOCOL OVERRIDDEN, not a gate run' if pv.get('overrides') else ''}",
              f"- Physics: {pr['physics']}. Scenes: `{pv['assets']}` (all files sha256 "
-             f"`{pv.get('assets_sha256', '?')[:16]}…`); servo model sha256 `{pv['servo_sha256'][:16]}…`",
+             f"`{pv.get('assets_sha256', '?')[:16]}…`, compiled model `{pv.get('model_sha256', '?')[:16]}…`); "
+             f"servo model sha256 `{pv['servo_sha256'][:16]}…`",
              f"- Code: {pv['code']}; {pv['scenes']} scenes in {pv['elapsed_s']:.0f} s on {pv['workers']} workers", "",
              "## Attempts", "",
              f"Each posture command is an attempt: reached within {cr['reach_s']:g} s, held to the end of the "
-             f"{pr['segment_s']:g} s segment, no fall (tilt > {cr['fell_deg']:g}°), and in the last "
-             f"{cr['hold_window_s']:g} s no head-ground contact and no head joint off its command by more than "
-             f"{cr['head_deviation_rad']:g} rad for more than {cr['head_deviation_frac_max']:.0%} of the window. "
+             f"{pr['segment_s']:g} s segment, no fall (tilt > {cr['fell_deg']:g}°), no head-ground contact where "
+             f"it counts (see below), and in the last {cr['hold_window_s']:g} s no head joint off its command by "
+             f"more than {cr['head_deviation_rad']:g} rad for more than {cr['head_deviation_frac_max']:.0%} of the "
+             "window. "
              f"Sit: trunk ≤ {cr['sit_z_max_m']:g} m; stand: ≥ {cr['stand_z_min_m']:g} m; tilt < {cr['upright_deg']:g}°. "
              f"Voltages {', '.join(f'{v:g} V' for v in pr['voltages'])}; {pr['seeds']} seeds per cell; head command "
              f"zero; seated starts tilted at most {pr['seated_tilt_deg']:g}°. Zero tolerance for falls and hold-window "
@@ -766,16 +774,18 @@ def write_markdown(out: Path, report: dict) -> None:
 
 
 def code_identity() -> str:
-    """The commit, and with local changes the sha256 of `git diff HEAD` plus the untracked files' names."""
+    """The commit, and with local changes one sha256 over `git diff HEAD` and every untracked file's name and bytes."""
     git = lambda *a: subprocess.run(["git", "-C", str(ROOT), *a], capture_output=True, text=True,  # noqa: E731
                                     check=True).stdout
     try:
         head, status = git("rev-parse", "HEAD").strip(), git("status", "--porcelain").strip()
         if not status:
             return f"microduck-rl {head[:12]}"
-        untracked = sorted(line[3:] for line in status.splitlines() if line.startswith("??"))
-        diff = hashlib.sha256((git("diff", "HEAD") + "\n".join(untracked)).encode()).hexdigest()
-        return f"microduck-rl {head[:12]} with local changes (diff sha256 {diff[:16]}, untracked {untracked})"
+        untracked = sorted(git("ls-files", "--others", "--exclude-standard").split())
+        h = hashlib.sha256(git("diff", "HEAD").encode())
+        for name in untracked:
+            h.update(name.encode() + b"\0" + (ROOT / name).read_bytes())
+        return f"microduck-rl {head[:12]} with local changes (sha256 {h.hexdigest()[:16]}, untracked {untracked})"
     except Exception:  # noqa: BLE001
         return "microduck-rl (no git)"
 
@@ -785,9 +795,17 @@ def sha256(path: Path) -> str:
 
 
 def tree_sha256(root: Path) -> tuple[str, dict]:
-    """Every file under the assets directory (the scene includes the robot, its meshes and parameters)."""
+    """Every file under the assets directory (the scene and the robot MJCF; its meshes may live elsewhere)."""
     files = {str(p.relative_to(root)): sha256(p) for p in sorted(Path(root).rglob("*")) if p.is_file()}
     return hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest(), files
+
+
+def model_sha256(scene: Path) -> str:
+    """The compiled scene as MuJoCo loads it: masses, collisions and the meshes wherever meshdir points."""
+    model = mujoco.MjModel.from_xml_path(str(scene))
+    buf = np.zeros(mujoco.mj_sizeModel(model), dtype=np.uint8)
+    mujoco.mj_saveModel(model, None, buf)
+    return hashlib.sha256(buf.tobytes()).hexdigest()
 
 
 def _job(args):
@@ -834,6 +852,7 @@ def main() -> None:
                              "onnx_sha256": sha256(args.onnx), "spec": str(args.spec.resolve()),
                              "spec_sha256": spec_sha, "overrides": overrides, "assets": str(args.assets.resolve()),
                              "assets_sha256": assets_sha, "assets_files": assets_files,
+                             "model_sha256": model_sha256(args.assets / "scene_hd1910_groundcontact.xml"),
                              "servo_sha256": sha256(args.servo_params),
                              "code": code_identity(), "argv": sys.argv, "scenes": len(scenes),
                              "workers": args.workers, "elapsed_s": elapsed,

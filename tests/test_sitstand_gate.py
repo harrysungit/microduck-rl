@@ -228,9 +228,11 @@ def test_the_frozen_thresholds_pass_a_kissqy_like_result_and_fail_a_worse_one():
 
 
 def test_falls_head_failures_and_breaks_are_zero_tolerance_in_nominal_only():
-    elsewhere = summary(falls={"disturbed": ["a", "b"]}, head={"disturbed": ["c#0"]},
-                        broken={"disturbed": ["d"], "fallback": ["e"]})  # counted in the rate, or reported only
+    elsewhere = summary(falls={"disturbed": ["a", "b"]}, head={"disturbed": ["c#0"]})  # counted in the rate
     assert g.verdict(elsewhere, crit(min_success_rate=BOTH), None) == ("PASSED", [])
+    for broken in ({"disturbed": ["d"]}, {"fallback": ["e"]}):  # no fail, but a broken tool is never a pass
+        status, why = g.verdict(summary(broken=broken), crit(min_success_rate=BOTH), None)
+        assert status == "UNDECIDED" and "1 scenes outside nominal broke" in why[0]
     status, why = g.verdict(summary(falls={"nominal": ["a"]}), crit(min_success_rate=BOTH), None)
     assert status == "FAILED" and why[0].startswith("nominal: 1 scenes fell")
     status, why = g.verdict(summary(broken={"nominal": ["a"]}), crit(min_success_rate=BOTH), None)
@@ -446,14 +448,86 @@ def test_a_scene_starts_the_same_for_every_policy_and_reruns_exactly(assets):
     assert again["impact_peak_N"] == a["impact_peak_N"] and again["attempts"] == a["attempts"]
 
 
-def test_a_fallback_scene_reports_its_metrics_and_perturbations(assets):
+def test_a_seated_start_needs_the_hd1910_joint_order_and_a_broken_scene_is_reported(assets):
     spec = short_spec()
-    spec["protocol"]["fallback"].update(jerk_interval_s=[0.05, 0.05], jerk_prob=1.0)
     scene = g.Scene("fallback", "head_jerks", "nominal", 7.4, 0, True)
-    with pytest.raises(AssertionError):  # the stand-in's joints are not the HD-1910's: no seated start for it
-        r = g._run_scene(scene, spec, None, assets, sim2sim.SERVO_PARAMS, StandIn(), None, False)
+    with pytest.raises(AssertionError):  # the small stand-in's joints are not the HD-1910's
+        g._run_scene(scene, spec, None, assets, sim2sim.SERVO_PARAMS, StandIn(), None, False)
     r = g.run_scene(scene, spec, None, assets, sim2sim.SERVO_PARAMS, policy=StandIn())
     assert "AssertionError" in r["error"]  # a broken scene is reported, not raised
+
+
+# A stand-in with the HD-1910's 14 joints in its order, so that seated starts and the fall-back battery run end to end.
+HD_JOINTS = ["left_hip_yaw", "left_hip_roll", "left_hip_pitch", "left_knee", "left_ankle",
+             "neck_pitch", "head_pitch", "head_yaw", "head_roll",
+             "right_hip_yaw", "right_hip_roll", "right_hip_pitch", "right_knee", "right_ankle"]
+
+
+def hd_robot() -> str:
+    def leg(side, y):
+        axes = ["0 0 1", "1 0 0", "0 1 0", "0 1 0", "0 1 0"]
+        names = [f"{side}_{n}" for n in ("hip_yaw", "hip_roll", "hip_pitch", "knee", "ankle")]
+        xml, close = "", ""
+        for i, (name, axis) in enumerate(zip(names, axes)):
+            xml += (f'<body name="{name}_link" pos="0 {y if i == 0 else 0} -0.012">'
+                    f'<joint name="{name}" axis="{axis}" range="-2 2"/>'
+                    f'<geom type="capsule" fromto="0 0 0 0 0 -0.012" size="0.006" mass="0.02"/>')
+            close += "</body>"
+        foot = f'<geom name="{side}_foot_collision" type="box" size="0.03 0.015 0.004" pos="0 0 -0.012" mass="0.02"/>'
+        return xml + foot + close
+    head = ('<body name="neck" pos="0.02 0 0.025"><joint name="neck_pitch" axis="0 1 0" range="-2 2"/>'
+            '<geom type="capsule" fromto="0 0 0 0 0 0.03" size="0.006" mass="0.02"/>'
+            '<body name="head" pos="0 0 0.03"><joint name="head_pitch" axis="0 1 0" range="-2 2"/>'
+            '<joint name="head_yaw" axis="0 0 1" range="-2 2"/><joint name="head_roll" axis="1 0 0" range="-2 2"/>'
+            '<geom name="jaw_soft" type="sphere" size="0.015" mass="0.03"/></body></body>')
+    actuators = "".join(f'<position joint="{j}" kp="0.5"/>' for j in HD_JOINTS)
+    return (f'<mujoco><worldbody><geom name="floor" type="plane" size="0 0 0.05"/>'
+            f'<body name="trunk_base" pos="0 0 0.125"><freejoint/>'
+            f'<geom name="trunk_collision" type="box" size="0.035 0.035 0.02" mass="0.4"/><site name="imu"/>'
+            f'{leg("left", 0.025)}{leg("right", -0.025)}{head}</body></worldbody>'
+            f'<actuator>{actuators}</actuator><sensor><gyro name="imu_ang_vel" site="imu"/>'
+            f'<framequat name="orientation" objtype="site" objname="imu"/></sensor></mujoco>')
+
+
+class HdStandIn(StandIn):
+    def __init__(self):
+        super().__init__()
+        self.joint_names, self.home = HD_JOINTS, np.zeros(len(HD_JOINTS))
+
+    def __call__(self, obs):
+        self.seen.append(obs.copy())
+        return np.zeros(len(HD_JOINTS))
+
+
+def test_a_fallback_scene_runs_end_to_end_with_its_perturbations(tmp_path):
+    (tmp_path / "scene_hd1910_groundcontact.xml").write_text(hd_robot())
+    spec = short_spec()
+    spec["protocol"]["fallback"].update(seconds=1.0, jerk_interval_s=[0.1, 0.1], jerk_prob=1.0,
+                                        tip_interval_s=[0.3, 0.3], tip_prob=1.0, head_resample_s=[0.5, 0.5])
+    scene = g.Scene("fallback", "head_jerks_and_tips", "nominal", 7.4, 0, True)
+    policy = HdStandIn()
+    r = g.run_scene(scene, spec, None, tmp_path, sim2sim.SERVO_PARAMS, policy=policy, keep_traces=True)
+    assert r["error"] is None, r["error"]
+    m = r["fallback"]
+    assert m["ticks"] == 50 and set(m) >= {"leaned_ticks", "leaned_at_end", "neck_tau_leaned_sum_Nm"}
+    assert r["events"]["jerks"] >= 9 and r["events"]["tips"] >= 3 and r["events"]["head_resamples"] >= 1
+    assert all(obs[-13] == 1.0 for obs in policy.seen)  # sit, throughout
+    assert r["traces"]["tilt"][0] < 4.0 * np.sqrt(2) + 2.0  # a 4 degree seated start, a tick later
+
+
+def test_contact_times_on_the_control_clock_and_boundaries_do_not_count():
+    audit = g.ContactAudit(["world", "jaw"], head={1}, feet=set())
+    audit.step(18.78000000000055 - 0.005, 0.005, {1: 3.0})
+    audit.step(18.78000000000055 - 0.010 + 0.010, 0.005, {})
+    ev = audit.finish()[0]
+    assert ev["end_s"] == 18.78  # rounded: data.time sums 5 ms steps
+    tr = make_traces(["sit", "sit"], lambda x: 0.06 if x >= 1.0 else 0.115)
+    phase = crit(hold_head_contact="hold_phase")
+    until = {"body": "jaw_soft", "head": True, "start_s": 0.9, "end_s": 1.0, "peak_N": 9.0}  # ends at the arrival
+    at_boundary = {"body": "jaw_soft", "head": True, "start_s": 6.0, "end_s": 6.1, "peak_N": 9.0}
+    a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [until, at_boundary], None, None, phase)
+    assert a[0]["success"]  # neither the contact ending at the arrival nor the one starting at the segment's end
+    assert a[1]["reasons"] == ["head_contact_in_hold"]  # the second segment holds the sit from 6.0 s
 
 
 def test_neck_subtree_follows_parent_links(assets):

@@ -111,15 +111,19 @@ def test_a_head_off_its_command_in_the_hold_window_fails_above_the_share():
     assert bad[0]["head_max_dev_rad"] == pytest.approx(0.3)
 
 
-def test_head_contact_counts_once_the_posture_is_reached():
-    assert CRIT["hold_head_contact"] == "hold_phase"
+def head(start, end, peak):
+    return {"body": "jaw_soft", "head": True, "start_s": start, "end_s": end, "peak_N": peak}
+
+
+def test_light_support_passes_an_impact_fails_and_a_head_resting_once_held_fails():
+    assert (CRIT["head_impact_N"], CRIT["head_rest_s"]) == (16.0, 0.05)
     tr = make_traces(["sit", "stand"], sit_then_stand())  # sits at 1.0 s
-    assist = {"body": "jaw_soft", "head": True, "start_s": 0.5, "end_s": 0.9, "peak_N": 2.0}
-    assert all(x["success"] for x in score(tr, head_events=[assist]))
-    rest = {"body": "jaw_soft", "head": True, "start_s": 4.5, "end_s": 4.6, "peak_N": 0.5}
-    a = score(tr, head_events=[rest])
-    assert a[0]["reasons"] == ["head_contact_in_hold"] and a[0]["head_contact_in_hold"][0]["body"] == "jaw_soft"
-    assert a[1]["success"]
+    assert all(x["success"] for x in score(tr, head_events=[head(0.5, 0.9, 8.0)]))  # light support on the way down
+    a = score(tr, head_events=[head(0.9, 1.0, 64.0)])  # the chin lands with the body: an impact
+    assert a[0]["reasons"] == ["head_impact"] and a[0]["head_impacts"][0]["peak_N"] == 64.0 and a[1]["success"]
+    assert score(tr, head_events=[head(0.95, 1.04, 8.0)])[0]["success"]  # 40 ms past the arrival: still support
+    a = score(tr, head_events=[head(4.5, 4.55, 0.5)])  # 50 ms resting while seated
+    assert a[0]["reasons"] == ["head_rest_in_hold"] and a[0]["head_rest_in_hold"][0]["body"] == "jaw_soft"
 
 
 def test_a_fall_fails_its_segment_and_every_later_one():
@@ -198,7 +202,7 @@ def summary(rate_nominal=0.97, rate_disturbed=0.96, falls=None, head=None, broke
     conds = {c: {"attempts": 100, "successes": round(100 * r), "rate": r}
              for c, r in (("nominal", rate_nominal), ("disturbed", rate_disturbed))}
     empty = {"nominal": [], "disturbed": []}
-    return {"conditions": conds, "falls": {**empty, **(falls or {})}, "hold_head_failures": {**empty, **(head or {})},
+    return {"conditions": conds, "falls": {**empty, **(falls or {})}, "head_failures": {**empty, **(head or {})},
             "broken_scenes": {**empty, "fallback": [], **(broken or {})}}
 
 
@@ -334,20 +338,16 @@ def test_jerks_flip_or_resample_the_head_command_and_resamples_follow_their_inte
     assert pert.counts["head_resamples"] == 3 and pert.counts["jerks"] == 0  # at 2, 4 and 6 s
 
 
-def test_hold_phase_judges_head_contact_over_the_whole_held_part():
+def test_a_head_resting_counts_over_the_whole_held_part():
     tr = make_traces(["sit", "sit"], lambda x: 0.06 if x >= 1.0 else 0.115)
-    early = {"body": "jaw_soft", "head": True, "start_s": 7.0, "end_s": 7.2, "peak_N": 1.0}  # 1 s into a sit hold
-    assist = {"body": "jaw_soft", "head": True, "start_s": 0.5, "end_s": 0.8, "peak_N": 1.0}  # before the arrival
-    settled = {"body": "jaw_soft", "head": True, "start_s": 1.5, "end_s": 1.6, "peak_N": 1.0}  # after the arrival
-    last = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [early, assist, settled], None, None,
-                            crit(hold_head_contact="last_window"))
-    assert all(a["success"] for a in last)  # the last-window rule sees none of them
-    phase = crit(hold_head_contact="hold_phase")
-    a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [assist], None, None, phase)
-    assert a[0]["success"] and a[0]["head_contact_from_s"] == pytest.approx(1.0)
-    a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [settled, early], None, None, phase)
-    assert a[0]["reasons"] == ["head_contact_in_hold"] and a[1]["reasons"] == ["head_contact_in_hold"]
-    assert a[1]["transition"] == "hold" and a[1]["head_contact_from_s"] == 6.0
+    early = head(7.0, 7.2, 1.0)  # 1 s into a sit hold, long before the last window
+    assist = head(0.5, 0.8, 1.0)  # before the arrival
+    settled = head(1.5, 1.6, 1.0)  # after the arrival
+    a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [assist], None, None, CRIT)
+    assert a[0]["success"] and a[0]["held_from_s"] == pytest.approx(1.0)
+    a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [settled, early], None, None, CRIT)
+    assert a[0]["reasons"] == ["head_rest_in_hold"] and a[1]["reasons"] == ["head_rest_in_hold"]
+    assert a[1]["transition"] == "hold" and a[1]["held_from_s"] == 6.0
 
 
 # -- short scenes on a stand-in robot ------------------------------------------------------------------------------
@@ -522,12 +522,15 @@ def test_contact_times_on_the_control_clock_and_boundaries_do_not_count():
     ev = audit.finish()[0]
     assert ev["end_s"] == 18.78  # rounded: data.time sums 5 ms steps
     tr = make_traces(["sit", "sit"], lambda x: 0.06 if x >= 1.0 else 0.115)
-    phase = crit(hold_head_contact="hold_phase")
-    until = {"body": "jaw_soft", "head": True, "start_s": 0.9, "end_s": 1.0, "peak_N": 9.0}  # ends at the arrival
-    at_boundary = {"body": "jaw_soft", "head": True, "start_s": 6.0, "end_s": 6.1, "peak_N": 9.0}
-    a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [until, at_boundary], None, None, phase)
+    until = head(0.9, 1.0, 9.0)  # light, ends at the arrival
+    at_boundary = head(6.0, 6.1, 9.0)  # starts at the first segment's end
+    a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [until, at_boundary], None, None, CRIT)
     assert a[0]["success"]  # neither the contact ending at the arrival nor the one starting at the segment's end
-    assert a[1]["reasons"] == ["head_contact_in_hold"]  # the second segment holds the sit from 6.0 s
+    assert a[1]["reasons"] == ["head_rest_in_hold"]  # the second segment holds the sit from 6.0 s
+    exactly = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [head(1.0, 1.05, 9.0)], None, None, CRIT)
+    assert exactly[0]["reasons"] == ["head_rest_in_hold"]  # 50 ms counts
+    at_limit = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [head(0.5, 0.6, 16.0)], None, None, CRIT)
+    assert at_limit[0]["reasons"] == ["head_impact"]  # 16 N counts
 
 
 def test_neck_subtree_follows_parent_links(assets):
@@ -548,8 +551,8 @@ def test_the_gate_does_not_import_the_training_code():
 def test_summary_and_report_from_scene_results(tmp_path):
     spec = copy.deepcopy(SPEC)
     ok = {"success": True, "reasons": [], "transition": "sit-down", "segment": 0}
-    bad = {"success": False, "reasons": ["head_contact_in_hold"], "transition": "hold", "segment": 1,
-           "head_contact_in_hold": [{"body": "jaw_soft", "start_s": 11.0, "end_s": 11.2, "peak_N": 1.0}]}
+    bad = {"success": False, "reasons": ["head_rest_in_hold"], "transition": "hold", "segment": 1,
+           "head_rest_in_hold": [{"body": "jaw_soft", "start_s": 11.0, "end_s": 11.2, "peak_N": 1.0}]}
     results = []
     for s in g.posture_scenes(spec["protocol"]):
         attempts = [dict(ok)] * 3 + [dict(bad) if s.seed == 0 and s.scenario == "sit_hold" else dict(ok)]
@@ -567,8 +570,8 @@ def test_summary_and_report_from_scene_results(tmp_path):
     sm = g.summarize(results, spec)
     assert sm["conditions"]["nominal"]["attempts"] == 4 * 2 * 16 * 4
     # sit_hold seed 0 at two voltages, in each condition
-    assert {c: len(v) for c, v in sm["hold_head_failures"].items()} == {"nominal": 2, "disturbed": 2}
-    assert sm["head_contacts_outside_hold"]["events"] == 0  # the only head contacts were in hold windows
+    assert {c: len(v) for c, v in sm["head_failures"].items()} == {"nominal": 2, "disturbed": 2}
+    assert sm["head_support"]["events"] == 0  # the only head contacts were failures
     fb = sm["fallback"]["head_jerks"]
     assert fb["time_leaned_back"] == pytest.approx(0.1) and fb["leaned_at_end"] == pytest.approx(0.5)
     assert fb["neck_tau_while_leaned_Nm"] == pytest.approx(0.05)

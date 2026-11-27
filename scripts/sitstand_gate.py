@@ -4,11 +4,11 @@ The acceptance check of a sit-stand policy, judged the way Pollen's sit-stand ta
 
 - every posture command is an attempt. It succeeds when the trunk reaches the commanded posture within
   ``reach_s``, stays there to the end of the segment, the robot does not fall, and in the segment's last
-  ``hold_window_s`` (the hold) the head does not stay off its commanded pose, and in the held part
-  (``hold_head_contact``: the last window, or the whole held phase) the head does not touch the ground. A fall or a
-  broken simulation fails the attempt; nothing leaves the denominator. The first policy target fills the servo
+  ``hold_window_s`` (the hold) the head does not stay off its commanded pose; the head never hits the ground
+  (``head_impact_N``, about twice the robot's weight) and does not rest on it for ``head_rest_s`` once the posture is
+  held. A fall or a broken simulation fails the attempt; nothing leaves the denominator. The first policy target fills the servo
   latency line, as the training's delay buffer does after a reset;
-- brief head support during a transition is allowed: such contacts are recorded, not judged;
+- light, brief head support during a transition is allowed: such contacts are recorded, not judged;
 - every physics step (5 ms) records which non-foot bodies touch the ground and how hard: parts, start and end,
   peak normal force and impulse. Impact peaks are pointers for the video review, not a verdict;
 - the official seated fall-back metrics (Pollen's docs/sitstand_policy.md): a seated start held for 30 s under
@@ -22,7 +22,7 @@ battery's. Seated starts tilt at most seated_tilt_deg (the training spawns up to
 depend only on its id, so two policies meet the same starts and disturbances; the report records each scene's
 initial-state hash so that a paired comparison (--reference) can check it.
 
-Verdict, a stage automatic check: no fall and no hold-window head failure in the zero-tolerance conditions (nominal),
+Verdict, a stage automatic check: no fall, head failure or broken scene in the zero-tolerance conditions (nominal),
 and each condition's success rate at least its threshold. PASSED, FAILED, or UNDECIDED while a threshold is unset.
 The protocol and the criteria are in sitstand_gate.json; the report records its sha256. The verdict never replaces
 the final review of full-motion videos or a robot test; --videos renders one scene per scenario by a fixed rule.
@@ -409,7 +409,9 @@ def state_hash(data: mujoco.MjData, p: dict) -> str:
 # -- scoring -------------------------------------------------------------------------------------------------------
 def score_attempts(tr: dict, postures: list[str], seg_s: float, start_posture: str, head_events: list[dict],
                    fell_at: float | None, error: str | None, criteria: dict) -> list[dict]:
-    """One attempt per segment: reached in time, held to the end, no fall, head right in the hold window."""
+    """One attempt per segment: reached in time, held to the end, no fall; no head impact (a head contact of at least
+    head_impact_N) anywhere in the segment; no head resting on the ground for head_rest_s once the posture is held;
+    the head on its command in the last hold_window_s. Lighter, shorter head support before the arrival is allowed."""
     t, z, tilt = (np.asarray(tr[k], dtype=float) for k in ("t", "z", "tilt"))
     dev = np.abs(np.asarray(tr["head_q"], dtype=float) - np.asarray(tr["head_cmd"], dtype=float)).reshape(len(t), 4)
     off = dev.max(axis=1) > criteria["head_deviation_rad"] if len(t) else np.zeros(0, bool)
@@ -426,6 +428,11 @@ def score_attempts(tr: dict, postures: list[str], seg_s: float, start_posture: s
             row["reasons"].append("error")
         if fell_at is not None and fell_at <= end + 1e-9:
             row["reasons"].append("fell")
+        inside = [e for e in head_events if e["start_s"] < end - 1e-6 and e["end_s"] > start + 1e-6]
+        hits = [e for e in inside if e["peak_N"] >= criteria["head_impact_N"]]
+        row["head_impacts"] = [{k: e[k] for k in ("body", "start_s", "end_s", "peak_N")} for e in hits]
+        if hits:
+            row["reasons"].append("head_impact")
         if sel.any():
             good = ((z <= criteria["sit_z_max_m"]) if posture == "sit" else (z >= criteria["stand_z_min_m"])) & \
                    (tilt < criteria["upright_deg"])
@@ -445,12 +452,12 @@ def score_attempts(tr: dict, postures: list[str], seg_s: float, start_posture: s
                 row["reasons"].append("not_in_posture_at_end")
             elif row["settled_s"] > criteria["reach_s"]:
                 row["reasons"].append("reached_late")
-            since = contact_window_start(row, start, end, hold, criteria.get("hold_head_contact", "last_window"))
-            row["head_contact_from_s"] = since
-            touch = [e for e in head_events if e["start_s"] < end - 1e-6 and e["end_s"] > since + 1e-6]
-            row["head_contact_in_hold"] = [{k: e[k] for k in ("body", "start_s", "end_s", "peak_N")} for e in touch]
-            if touch:
-                row["reasons"].append("head_contact_in_hold")
+            since = held_from(row, start, end, hold)
+            row["held_from_s"] = since
+            rest = [e for e in inside if min(e["end_s"], end) - max(e["start_s"], since) >= criteria["head_rest_s"] - 1e-6]
+            row["head_rest_in_hold"] = [{k: e[k] for k in ("body", "start_s", "end_s", "peak_N")} for e in rest]
+            if rest:
+                row["reasons"].append("head_rest_in_hold")
             if row.get("head_off_frac") is not None and row["head_off_frac"] > criteria["head_deviation_frac_max"]:
                 row["reasons"].append("head_off_command_in_hold")
         row["success"] = not row["reasons"]
@@ -459,14 +466,9 @@ def score_attempts(tr: dict, postures: list[str], seg_s: float, start_posture: s
     return out
 
 
-def contact_window_start(row: dict, start: float, end: float, hold: float, rule: str) -> float:
-    """Where head contact starts to count. last_window: the segment's last hold_window_s. hold_phase: the whole held
-    part, the whole segment when the posture does not change, else from the arrival (the last window if it never
-    arrived); head support before the arrival is transition support."""
-    if rule == "last_window":
-        return end - hold
-    if rule != "hold_phase":
-        raise ValueError(f"unknown hold_head_contact rule {rule!r}")
+def held_from(row: dict, start: float, end: float, hold: float) -> float:
+    """Where the posture is held: the whole segment when the posture does not change, else from the arrival (the
+    last hold window if it never arrived). Head support before it is transition support."""
     if row["transition"] == "hold":
         return start
     return start + row["settled_s"] if row["settled_s"] is not None else end - hold
@@ -481,7 +483,7 @@ def fallback_metrics(tr: dict, lean_deg: float) -> dict:
             "neck_tau_leaned_sum_Nm": float(tau[leaned].sum()), "max_tilt_deg": float(tilt.max()) if len(tilt) else None}
 
 
-HEAD_REASONS = ("head_contact_in_hold", "head_off_command_in_hold")
+HEAD_REASONS = ("head_impact", "head_rest_in_hold", "head_off_command_in_hold")
 
 
 def summarize(results: list[dict], spec: dict) -> dict:
@@ -508,9 +510,10 @@ def summarize(results: list[dict], spec: dict) -> dict:
                 head_failures[sc["condition"]].append(f"{r['id']}#{a.get('segment')}")
         if r.get("fell_at_s") is not None:
             falls[sc["condition"]].append(r["id"])
-        hold_touch = {(c["start_s"], c["body"]) for a in attempts for c in a.get("head_contact_in_hold", [])}
+        judged = {(c["start_s"], c["body"]) for a in attempts
+                  for c in a.get("head_impacts", []) + a.get("head_rest_in_hold", [])}
         head_assist += [dict(c, id=r["id"]) for c in r.get("contacts", [])
-                        if c["head"] and (c["start_s"], c["body"]) not in hold_touch]
+                        if c["head"] and (c["start_s"], c["body"]) not in judged]
     for c in list(cells.values()) + list(by_transition.values()):
         c["rate"] = c["successes"] / c["attempts"] if c["attempts"] else None
     conditions = {}
@@ -544,8 +547,8 @@ def summarize(results: list[dict], spec: dict) -> dict:
         if r.get("error"):
             errors["fallback" if r["scene"]["kind"] == "fallback" else r["scene"]["condition"]].append(r["id"])
     return {"cells": cells, "conditions": conditions, "by_transition": by_transition, "reasons": reasons,
-            "falls": falls, "hold_head_failures": head_failures, "broken_scenes": errors,
-            "head_contacts_outside_hold": {"events": len(head_assist), "scenes": len({c["id"] for c in head_assist}),
+            "falls": falls, "head_failures": head_failures, "broken_scenes": errors,
+            "head_support": {"events": len(head_assist), "scenes": len({c["id"] for c in head_assist}),
                                            "total_s": float(sum(c["duration_s"] for c in head_assist)),
                                            "peak_N": max((c["peak_N"] for c in head_assist), default=0.0)},
             "impacts": impacts, "fallback": fallback}
@@ -577,17 +580,16 @@ def paired(results: list[dict], reference: dict, spec_sha256: str, overrides: di
 
 
 def verdict(summary: dict, criteria: dict, pairing: dict | None) -> tuple[str, list[str]]:
-    """Zero tolerance (falls, hold-window head failures, broken scenes) in the listed conditions; elsewhere those
+    """Zero tolerance (falls, head failures, broken scenes) in the listed conditions; elsewhere those
     count against the success rate only, and the fall-back battery is reported only. Each condition's success rate
     against its own threshold."""
     fail, open_ = [], []
     for cond in criteria["zero_tolerance_conditions"]:
-        falls, head = summary["falls"].get(cond, []), summary["hold_head_failures"].get(cond, [])
+        falls, head = summary["falls"].get(cond, []), summary["head_failures"].get(cond, [])
         if len(falls) > criteria["max_falls"]:
             fail.append(f"{cond}: {len(falls)} scenes fell (max {criteria['max_falls']})")
-        if len(head) > criteria["max_hold_head_failures"]:
-            fail.append(f"{cond}: {len(head)} attempts failed the hold-window head check "
-                        f"(max {criteria['max_hold_head_failures']})")
+        if len(head) > criteria["max_head_failures"]:
+            fail.append(f"{cond}: {len(head)} attempts failed the head check (max {criteria['max_head_failures']})")
         if summary["broken_scenes"].get(cond):
             fail.append(f"{cond}: {len(summary['broken_scenes'][cond])} scenes broke")
     thresholds = criteria["min_success_rate"]
@@ -698,10 +700,9 @@ def write_markdown(out: Path, report: dict) -> None:
              f"- Code: {pv['code']}; {pv['scenes']} scenes in {pv['elapsed_s']:.0f} s on {pv['workers']} workers", "",
              "## Attempts", "",
              f"Each posture command is an attempt: reached within {cr['reach_s']:g} s, held to the end of the "
-             f"{pr['segment_s']:g} s segment, no fall (tilt > {cr['fell_deg']:g}°), no head-ground contact where "
-             f"it counts (see below), and in the last {cr['hold_window_s']:g} s no head joint off its command by "
-             f"more than {cr['head_deviation_rad']:g} rad for more than {cr['head_deviation_frac_max']:.0%} of the "
-             "window. "
+             f"{pr['segment_s']:g} s segment, no fall (tilt > {cr['fell_deg']:g}°), no head failure (see below), "
+             f"and in the last {cr['hold_window_s']:g} s no head joint off its command by more than "
+             f"{cr['head_deviation_rad']:g} rad for more than {cr['head_deviation_frac_max']:.0%} of the window. "
              f"Sit: trunk ≤ {cr['sit_z_max_m']:g} m; stand: ≥ {cr['stand_z_min_m']:g} m; tilt < {cr['upright_deg']:g}°. "
              f"Voltages {', '.join(f'{v:g} V' for v in pr['voltages'])}; {pr['seeds']} seeds per cell; head command "
              f"zero; seated starts tilted at most {pr['seated_tilt_deg']:g}°. Zero tolerance for falls and hold-window "
@@ -719,18 +720,18 @@ def write_markdown(out: Path, report: dict) -> None:
     lines += ["", "Failure reasons (an attempt can have several): " + (", ".join(
         f"{k} {v}" for k, v in sorted(sm["reasons"].items(), key=lambda kv: -kv[1])) or "none") + ".",
               "Falls (scenes): " + ", ".join(f"{c} {len(sm['falls'][c])}" for c in conds) +
-              ". Hold-window head failures (attempts): " + ", ".join(
-                  f"{c} {len(sm['hold_head_failures'][c])}" for c in conds) +
+              ". Head failures (attempts): " + ", ".join(
+                  f"{c} {len(sm['head_failures'][c])}" for c in conds) +
               ". Broken scenes: " + ", ".join(f"{c} {len(v)}" for c, v in sm["broken_scenes"].items()) + ".",
-              f"Head contact counts from {cr.get('hold_head_contact', 'last_window')}: " + (
-                  "the whole segment when the posture does not change, else from the arrival."
-                  if cr.get("hold_head_contact") == "hold_phase" else f"the segment's last {cr['hold_window_s']:g} s."),
+              f"Head failures: an impact of at least {cr['head_impact_N']:g} N anywhere in the segment; the head "
+              f"resting on the ground for {cr['head_rest_s'] * 1000:g} ms or longer once the posture is held (the whole "
+              "segment when the posture does not change, else from the arrival); the head off its command in the "
+              "last window.",
               "",
               "## Contacts (every 5 ms physics step)", "",
-              f"Head (the `neck` subtree) on the ground where it is not judged, allowed as transition support: "
-              f"{sm['head_contacts_outside_hold']['events']} events in {sm['head_contacts_outside_hold']['scenes']} "
-              f"scenes, {sm['head_contacts_outside_hold']['total_s']:.2f} s in all, peak "
-              f"{sm['head_contacts_outside_hold']['peak_N']:.2f} N.", "",
+              f"Head (the `neck` subtree) support that is not a failure: {sm['head_support']['events']} events in "
+              f"{sm['head_support']['scenes']} scenes, {sm['head_support']['total_s']:.2f} s in all, peak "
+              f"{sm['head_support']['peak_N']:.2f} N.", "",
               "Impact peak: the largest summed normal force of the non-foot bodies in a scene (the robot weighs about "
               "8 N). A pointer for the video review, not a verdict.", "",
               "| scenario | median (N) | max (N) | largest: scene, time, bodies |", "|---|---|---|---|"]

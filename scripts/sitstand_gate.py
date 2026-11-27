@@ -659,7 +659,7 @@ def write_markdown(out: Path, report: dict) -> None:
               "8 N). A pointer for the video review, not a verdict.", "",
               "| scenario | median (N) | max (N) | largest: scene, time, bodies |", "|---|---|---|---|"]
     for name, im in sm["impacts"].items():
-        top = im["top"][0] if im["top"] else None
+        top = im["top"][0] if im["top"] and im["top"][0]["t_s"] is not None else None  # None: no non-foot contact
         lines.append(f"| {name} | {im['median_N']:.1f} | {im['max_N']:.1f} | " + (
             f"`{top['id']}` at {top['t_s']:.2f} s, {', '.join(top['bodies'])}" if top else "-") + " |")
     fb = pr["fallback"]

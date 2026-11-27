@@ -382,9 +382,11 @@ def test_summary_and_report_from_scene_results(tmp_path):
         attempts = [dict(ok)] * 3 + [dict(bad) if s.seed == 0 and s.scenario == "sit_hold" else dict(ok)]
         contacts = [{"body": "jaw_soft", "head": True, "start_s": 11.0, "end_s": 11.2, "duration_s": 0.2,
                      "peak_N": 1.0, "impulse_Ns": 0.1}] if s.seed == 0 and s.scenario == "sit_hold" else []
+        standing = s.scenario == "stand_hold"  # a scenario without any non-foot contact has no impact peak
         results.append({"id": s.id, "scene": vars(s), "init_hash": "h", "fell_at_s": None, "error": None,
-                        "attempts": attempts, "contacts": contacts, "impact_peak_N": 5.0, "impact_peak_s": 1.0,
-                        "impact_peak_bodies": ["trunk_base"]})
+                        "attempts": attempts, "contacts": contacts, "impact_peak_N": 0.0 if standing else 5.0,
+                        "impact_peak_s": None if standing else 1.0,
+                        "impact_peak_bodies": [] if standing else ["trunk_base"]})
     for s in g.fallback_scenes(spec["protocol"]):
         results.append({"id": s.id, "scene": vars(s), "fell_at_s": None, "error": None, "contacts": [],
                         "fallback": {"ticks": 100, "leaned_ticks": 10, "leaned_at_end": s.seed % 2 == 0,
@@ -409,4 +411,5 @@ def test_summary_and_report_from_scene_results(tmp_path):
     g.write_markdown(tmp_path, report)
     text = (tmp_path / "README.md").read_text()
     assert "Stage automatic check: FAILED" in text and "| sit_hold |" in text
+    assert "| stand_hold | 0.0 | 0.0 | - |" in text
     assert "Falls (scenes): nominal 0, disturbed 0" in text and "Thresholds: nominal 98%, disturbed 80%" in text

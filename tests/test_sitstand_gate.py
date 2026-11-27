@@ -29,7 +29,7 @@ def test_the_spec_lists_the_approved_scenes():
     assert {s.scenario for s in scenes} == {"stand_cycle", "sit_cycle", "stand_hold", "sit_hold"}
     fallback = g.fallback_scenes(PROTOCOL)
     assert len(fallback) == 2 * 128 and {s.vin for s in fallback} == {7.4, 8.0} and all(s.head for s in fallback)
-    # set on the kissqy baseline (100% / 84.4%): a policy may not be clearly worse than the one the robot runs
+    # set on kissqy's policy, the one the robot runs (see CHANGELOG): a policy may not be clearly worse than it
     assert CRIT["min_success_rate"] == {"nominal": 0.98, "disturbed": 0.80}
     assert CRIT["zero_tolerance_conditions"] == ["nominal"]
     assert (CRIT["head_deviation_rad"], CRIT["head_deviation_frac_max"]) == (0.2, 0.2)
@@ -159,6 +159,26 @@ def test_contact_events_merge_short_gaps_and_add_up_impulse():
     jaw = next(e for e in events if e["body"] == "jaw")
     assert jaw["head"] and jaw["duration_s"] == pytest.approx(dt)
     assert audit.peak_n == 4.0 and audit.peak_t == pytest.approx(4 * dt)
+    assert trunk[0]["peak_s"] == pytest.approx(4 * dt)
+
+
+def test_a_segment_boundary_splits_a_contact_and_each_part_is_judged_where_it_happens():
+    audit = g.ContactAudit(["world", "jaw"], head={1}, feet=set())
+    dt = 0.005
+    for i in range(1180, 1220):  # 5.90-6.10 s: an impact just before the 6 s boundary, light support after it
+        if i == 1200:
+            audit.split()
+        audit.step(i * dt, dt, {1: 36.0 if i < 1190 else 7.0})
+    first, second = audit.finish()
+    assert (first["start_s"], first["end_s"], first["peak_N"]) == (5.9, 6.0, 36.0)
+    assert (second["start_s"], second["peak_N"], second["peak_s"]) == (6.0, 7.0, 6.0)
+    tr = make_traces(["sit", "stand"], sit_then_stand(stand_at=6.5))
+    tr["z"] = np.where(tr["t"] <= 6.0, 0.06, tr["z"])  # still sitting until the stand-up
+    a = g.score_attempts(tr, ["sit", "stand"], 6.0, "stand", [first, second], None, None, CRIT)
+    assert "head_impact" in a[0]["reasons"] and a[1]["success"]  # the 7 N after the boundary is support
+    # a contact that crosses the boundary unsplit (as before) would fail both segments on its 36 N peak
+    whole = dict(first, end_s=6.1)
+    assert "head_impact" in g.score_attempts(tr, ["sit", "stand"], 6.0, "stand", [whole], None, None, CRIT)[1]["reasons"]
 
 
 BOX = """

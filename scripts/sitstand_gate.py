@@ -164,8 +164,9 @@ def foot_bodies(model: mujoco.MjModel) -> set[int]:
 class ContactAudit:
     """Ground contacts of every non-foot body at every physics step, with the solved normal force.
 
-    A body's contact is one event from its first loaded step until it lets go for longer than MERGE_GAP_S: start,
-    end, peak normal force and impulse. The scene's impact peak is the largest summed non-foot normal force.
+    A body's contact is one event from its first loaded step until it lets go for longer than MERGE_GAP_S, or until a
+    segment boundary (split): start, end, peak normal force and its time, impulse. Gaps up to MERGE_GAP_S count as
+    contact time. The scene's impact peak is the largest summed non-foot normal force.
     """
 
     def __init__(self, body_names: list[str], head: set[int], feet: set[int]):
@@ -202,10 +203,18 @@ class ContactAudit:
             ev = self.open.get(body)
             if ev is None:
                 ev = self.open[body] = {"body": self.names[body], "head": body in self.head, "start_s": t,
-                                        "end_s": round(t + dt, 6), "peak_N": 0.0, "impulse_Ns": 0.0}
-            ev["end_s"], ev["peak_N"] = round(t + dt, 6), max(ev["peak_N"], f)
+                                        "end_s": round(t + dt, 6), "peak_N": 0.0, "peak_s": t, "impulse_Ns": 0.0}
+            ev["end_s"] = round(t + dt, 6)
+            if f > ev["peak_N"]:
+                ev["peak_N"], ev["peak_s"] = f, t
             ev["impulse_Ns"] += f * dt
         for body in [b for b, ev in self.open.items() if b not in loads and t + dt - ev["end_s"] > MERGE_GAP_S + 1e-9]:
+            self._close(body)
+
+    def split(self) -> None:
+        """End every open contact here (a segment boundary): each event, its peak and impulse belong to one segment,
+        and a contact still loaded goes on as a new event."""
+        for body in list(self.open):
             self._close(body)
 
     def _close(self, body: int) -> None:
@@ -326,8 +335,11 @@ def _run_scene(scene, spec, onnx, assets, servo_params, policy, render, keep_tra
     last_action, filtered = np.zeros(n), None
     fell_at, error, done = None, None, 0
     renderer = Renderer(model, trunk, render) if render else None
+    seg_ticks = round(seg_s / CONTROL_DT)
     for k in range(ticks):
         t0 = k * CONTROL_DT
+        if k and k % seg_ticks == 0:
+            audit.split()  # a contact is judged in the segment where it happens
         seg = min(int(t0 // seg_s + 1e-9), len(postures) - 1)
         flag = 1.0 if postures[seg] == "sit" else 0.0
         if scene.kind == "posture":
@@ -725,8 +737,9 @@ def write_markdown(out: Path, report: dict) -> None:
               ". Broken scenes: " + ", ".join(f"{c} {len(v)}" for c, v in sm["broken_scenes"].items()) + ".",
               f"Head failures: an impact of at least {cr['head_impact_N']:g} N anywhere in the segment; the head "
               f"resting on the ground for {cr['head_rest_s'] * 1000:g} ms or longer once the posture is held (the whole "
-              "segment when the posture does not change, else from the arrival); the head off its command in the "
-              "last window.",
+              "segment when the posture does not change, else from the arrival; gaps of up to "
+              f"{MERGE_GAP_S * 1000:g} ms count as contact); the head off its command in the last window. Contacts "
+              "are split at segment boundaries, so each is judged in the segment where it happens.",
               "",
               "## Contacts (every 5 ms physics step)", "",
               f"Head (the `neck` subtree) support that is not a failure: {sm['head_support']['events']} events in "
@@ -782,10 +795,14 @@ def code_identity() -> str:
         head, status = git("rev-parse", "HEAD").strip(), git("status", "--porcelain").strip()
         if not status:
             return f"microduck-rl {head[:12]}"
-        untracked = sorted(git("ls-files", "--others", "--exclude-standard").split())
+        untracked = sorted(n for n in git("ls-files", "-z", "--others", "--exclude-standard").split("\0") if n)
         h = hashlib.sha256(git("diff", "HEAD").encode())
         for name in untracked:
-            h.update(name.encode() + b"\0" + (ROOT / name).read_bytes())
+            try:
+                data = (ROOT / name).read_bytes()
+            except OSError as exc:
+                data = f"unreadable: {exc!r}".encode()
+            h.update(name.encode() + b"\0" + data)
         return f"microduck-rl {head[:12]} with local changes (sha256 {h.hexdigest()[:16]}, untracked {untracked})"
     except Exception:  # noqa: BLE001
         return "microduck-rl (no git)"

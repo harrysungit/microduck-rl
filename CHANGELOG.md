@@ -21,13 +21,15 @@
   transition's net turn.
 - `scripts/sitstand_gate.py`: the sit-stand gate, on the training's physics
   with robotd's chain. Each posture command is an attempt; a fall or a
-  broken scene stays in the denominator. In the hold window the head must
-  stay off the ground and within 0.2 rad of its command; head support during
-  a transition is recorded, not judged. Every 5 ms step records non-foot
+  broken scene stays in the denominator. Once the posture is reached the
+  head must stay off the ground, and in the last 2 s be within 0.2 rad of
+  its command; head support before the arrival is recorded, not judged.
+  The first policy target fills the servo latency line, as the training's
+  delay buffer does after a reset. Every 5 ms step records non-foot
   ground contacts with force and impulse. Falls and hold-window head
   failures fail it in the nominal condition; success thresholds are 98%
   nominal and 80% disturbed, set on kissqy's sit-stand policy (512/512 and
-  84.4%). Pollen's seated fall-back metrics are reported, not judged.
+  85.7%). Pollen's seated fall-back metrics are reported, not judged.
 - sim2sim's `seated_pose` takes the largest tilt; its draws do not change.
 - Tests clear `MICRODUCK_RL_*` from the environment: under `env/activate.sh`
   the upstream-check test fetched its fixture into the shared review cache.

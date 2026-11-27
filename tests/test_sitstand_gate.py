@@ -111,9 +111,10 @@ def test_a_head_off_its_command_in_the_hold_window_fails_above_the_share():
     assert bad[0]["head_max_dev_rad"] == pytest.approx(0.3)
 
 
-def test_head_contact_counts_in_the_hold_window_only():
-    tr = make_traces(["sit", "stand"], sit_then_stand())
-    assist = {"body": "jaw_soft", "head": True, "start_s": 1.0, "end_s": 1.4, "peak_N": 2.0}
+def test_head_contact_counts_once_the_posture_is_reached():
+    assert CRIT["hold_head_contact"] == "hold_phase"
+    tr = make_traces(["sit", "stand"], sit_then_stand())  # sits at 1.0 s
+    assist = {"body": "jaw_soft", "head": True, "start_s": 0.5, "end_s": 0.9, "peak_N": 2.0}
     assert all(x["success"] for x in score(tr, head_events=[assist]))
     rest = {"body": "jaw_soft", "head": True, "start_s": 4.5, "end_s": 4.6, "peak_N": 0.5}
     a = score(tr, head_events=[rest])
@@ -336,7 +337,8 @@ def test_hold_phase_judges_head_contact_over_the_whole_held_part():
     early = {"body": "jaw_soft", "head": True, "start_s": 7.0, "end_s": 7.2, "peak_N": 1.0}  # 1 s into a sit hold
     assist = {"body": "jaw_soft", "head": True, "start_s": 0.5, "end_s": 0.8, "peak_N": 1.0}  # before the arrival
     settled = {"body": "jaw_soft", "head": True, "start_s": 1.5, "end_s": 1.6, "peak_N": 1.0}  # after the arrival
-    last = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [early, assist, settled], None, None, CRIT)
+    last = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [early, assist, settled], None, None,
+                            crit(hold_head_contact="last_window"))
     assert all(a["success"] for a in last)  # the last-window rule sees none of them
     phase = crit(hold_head_contact="hold_phase")
     a = g.score_attempts(tr, ["sit", "sit"], 6.0, "stand", [assist], None, None, phase)

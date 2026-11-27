@@ -39,7 +39,7 @@
     "upright_deg": 30.0,
     "fell_deg": 70.0,
     "hold_window_s": 2.0,
-    "hold_head_contact": "last_window",
+    "hold_head_contact": "hold_phase",
     "head_deviation_rad": 0.2,
     "head_deviation_frac_max": 0.2,
     "zero_tolerance_conditions": ["nominal"],

@@ -146,9 +146,9 @@ A verdict is not a final review: a policy counts only after a review of its
 full-motion videos.
 
 The sit-stand gate replaces the withdrawn sit-stand acceptance. Each posture
-command is an attempt: reached in time, held, no fall, and in the hold the
-head off the ground and on its command; head support during a transition is
-recorded, not judged. Every 5 ms step records which parts touch the ground
+command is an attempt: reached in time, held, no fall; once the posture is
+reached the head stays off the ground, and in the last 2 s it is back on its
+command. Head support before the arrival is recorded, not judged. Every 5 ms step records which parts touch the ground
 and how hard. Its verdict, PASSED, FAILED or UNDECIDED, is a stage check:
 the protocol and the thresholds are in
 [scripts/sitstand_gate.json](scripts/sitstand_gate.json), and `--videos`
